@@ -11,7 +11,7 @@ A Chrome extension paired with a local bridge server that lets you point at any 
 └─────────────────────┘   SSE: progress  └──────────────────┘    file edits   └──────────────┘
 ```
 
-https://github.com/nemone81/claude-code-inspector/raw/main/docs/demo.mp4
+![Demo](docs/demo.mp4)
 
 ## Features
 
