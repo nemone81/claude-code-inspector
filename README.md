@@ -11,6 +11,8 @@ A Chrome extension paired with a local bridge server that lets you point at any 
 └─────────────────────┘   SSE: progress  └──────────────────┘    file edits   └──────────────┘
 ```
 
+https://github.com/nemone81/claude-code-inspector/raw/main/docs/demo.mp4
+
 ## Features
 
 - **Visual DOM picker** — hover and click any element on any page, just like Chrome DevTools' inspector.
@@ -20,7 +22,6 @@ A Chrome extension paired with a local bridge server that lets you point at any 
 - **Live progress feedback** — Server-Sent Events stream tool usage in real time (Read, Write, Edit, Bash…).
 - **In-page completion banner** — a persistent banner with the result and a "Reload without cache" button appears when the task finishes.
 - **Clipboard fallback** — when the bridge is offline, the prompt is copied to your clipboard for an interactive Claude Code session.
-- **Hot-reload during dev** — `dev-watch.js` reloads the extension on every file change.
 
 ## Quick start
 
