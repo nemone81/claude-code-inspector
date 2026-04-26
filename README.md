@@ -11,7 +11,7 @@ A Chrome extension paired with a local bridge server that lets you point at any 
 └─────────────────────┘   SSE: progress  └──────────────────┘    file edits   └──────────────┘
 ```
 
-![Demo](docs/demo.mp4)
+https://github.com/user-attachments/assets/dd3f5a25-765a-461b-8628-cedccc59ed74
 
 ## Features
 
