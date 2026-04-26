@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Bridge runtime state
+bridge/.session_id
+bridge/.env
+
+# OS / editor
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Build artifacts
+dist/
+build/
+*.zip
+
+# Logs
+*.log
+logs/
+
+# Local config
+.env
+.env.local

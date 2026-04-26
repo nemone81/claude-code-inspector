@@ -1,0 +1,7 @@
+/* Claude Inspector - Content CSS */
+#__claude_inspector_overlay__,
+#__claude_inspector_tooltip__ {
+  all: initial;
+  font-family: 'SF Mono', 'Fira Code', monospace !important;
+  box-sizing: border-box !important;
+}

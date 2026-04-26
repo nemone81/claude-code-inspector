@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Inspector</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #141210;
+    --bg2: #1d1b18;
+    --bg3: #252220;
+    --border: #2e2b27;
+    --accent: #CC785C;
+    --accent2: #e8956d;
+    --text: #f0ece4;
+    --text2: #9a9590;
+    --text3: #6b6760;
+    --green: #7daa6e;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  body {
+    width: 380px;
+    min-height: 200px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .logo-icon {
+    width: 24px;
+    height: 24px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+  }
+
+  .logo-text {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.04em;
+  }
+
+  .logo-sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.06em;
+  }
+
+  /* ── Mode toggle ── */
+  .mode-toggle {
+    display: flex;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .mode-btn {
+    padding: 4px 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text3);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.04em;
+  }
+
+  .mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* ── Main content ── */
+  .content { padding: 14px 16px; }
+
+  /* ── Inspector button ── */
+  .inspect-btn {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg3);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.15s;
+    letter-spacing: 0.03em;
+  }
+
+  .inspect-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(204, 120, 92, 0.06);
+  }
+
+  .inspect-btn.active {
+    border-color: var(--accent);
+    background: rgba(204, 120, 92, 0.1);
+    color: var(--accent2);
+    border-style: solid;
+    animation: pulse 1.5s ease infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(204,120,92,0.3); }
+    50% { box-shadow: 0 0 0 4px rgba(204,120,92,0); }
+  }
+
+  .inspect-icon { font-size: 15px; }
+
+  /* ── Element preview ── */
+  .element-preview {
+    display: none;
+    margin-top: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .element-preview.visible { display: block; }
+
+  .preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg3);
+  }
+
+  .preview-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .preview-selector {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .clear-btn {
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color 0.15s;
+  }
+
+  .clear-btn:hover { color: var(--accent); }
+
+  .preview-body {
+    padding: 10px 12px;
+  }
+
+  .preview-html {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text2);
+    line-height: 1.6;
+    max-height: 80px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-all;
+    position: relative;
+  }
+
+  .preview-html::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 24px;
+    background: linear-gradient(transparent, var(--bg2));
+  }
+
+  .preview-meta {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  .meta-chip {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 2px 7px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text3);
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Prompt area ── */
+  .prompt-section { margin-top: 12px; }
+
+  .prompt-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .prompt-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 80px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    line-height: 1.6;
+    padding: 10px 12px;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  textarea::placeholder { color: var(--text3); }
+  textarea:focus { border-color: var(--accent); }
+
+  /* ── Quick prompts ── */
+  .quick-prompts {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  .quick-btn {
+    padding: 4px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text3);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--sans);
+  }
+
+  .quick-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(204,120,92,0.05);
+  }
+
+  /* ── Color picker (DevTools-style) ── */
+  .color-panel {
+    display: none;
+    margin-top: 8px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .color-panel.open { display: block; }
+
+  .sv-area {
+    position: relative;
+    width: 100%;
+    height: 160px;
+    cursor: crosshair;
+    background:
+      linear-gradient(to top, #000, transparent),
+      linear-gradient(to right, #fff, transparent),
+      #ff0000;
+    user-select: none;
+  }
+
+  .sv-thumb {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 1px 4px rgba(0,0,0,0.4);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .picker-controls {
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 28px 36px 1fr;
+    grid-template-rows: auto auto;
+    gap: 8px 10px;
+    align-items: center;
+  }
+
+  .eyedropper-btn {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    width: 28px;
+    height: 28px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: all 0.15s;
+  }
+  .eyedropper-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .color-preview-circle {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background-color: #CC785C;
+    background-image:
+      linear-gradient(45deg, #555 25%, transparent 25%, transparent 75%, #555 75%),
+      linear-gradient(45deg, #555 25%, transparent 25%, transparent 75%, #555 75%);
+    background-size: 8px 8px;
+    background-position: 0 0, 4px 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .color-preview-circle::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--current-color, #CC785C);
+  }
+
+  .slider-track {
+    grid-column: 3;
+    height: 12px;
+    border-radius: 6px;
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .hue-track {
+    background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+  }
+
+  .alpha-track {
+    background-color: #fff;
+    background-image:
+      linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%),
+      linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%);
+    background-size: 8px 8px;
+    background-position: 0 0, 4px 4px;
+    position: relative;
+  }
+  .alpha-track::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+    background: var(--alpha-gradient, linear-gradient(to right, transparent, #CC785C));
+  }
+
+  .slider-thumb {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.3);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .picker-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px 10px;
+  }
+
+  .hex-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 10px;
+    outline: none;
+    text-transform: uppercase;
+  }
+  .hex-input:focus { border-color: var(--accent); }
+
+  .apply-color-btn {
+    padding: 6px 12px;
+    background: var(--accent);
+    border: none;
+    border-radius: 5px;
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .apply-color-btn:hover { background: var(--accent2); }
+
+  .palette-row {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 3px;
+    padding: 0 10px 10px;
+  }
+
+  .palette-swatch {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.1s;
+  }
+  .palette-swatch:hover { transform: scale(1.18); border-color: var(--text); }
+
+  /* ── Send button ── */
+  .send-section {
+    margin-top: 14px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .send-btn {
+    flex: 1;
+    padding: 10px 16px;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .send-btn:hover { background: var(--accent2); transform: translateY(-1px); }
+  .send-btn:active { transform: translateY(0); }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ── Status / feedback ── */
+  .status {
+    display: none;
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .status.success {
+    display: block;
+    background: rgba(125, 170, 110, 0.12);
+    border: 1px solid rgba(125, 170, 110, 0.3);
+    color: var(--green);
+  }
+
+  .status.error {
+    display: block;
+    background: rgba(204, 120, 92, 0.1);
+    border: 1px solid rgba(204, 120, 92, 0.3);
+    color: var(--accent2);
+  }
+
+  /* ── Bridge status indicator ── */
+  .bridge-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+  }
+
+  .bridge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text3);
+  }
+
+  .bridge-dot.connected { background: var(--green); animation: blink 2s ease infinite; }
+  .bridge-dot.error { background: #e05f5f; }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Config panel ── */
+  .config-toggle {
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px;
+    transition: color 0.15s;
+    margin-left: auto;
+  }
+
+  .config-toggle:hover { color: var(--text2); }
+
+  .config-panel {
+    display: none;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+  }
+
+  .config-panel.open { display: block; }
+
+  .config-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .config-row:last-child { margin-bottom: 0; }
+
+  .config-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.04em;
+    width: 70px;
+    flex-shrink: 0;
+  }
+
+  .config-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 8px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .config-input:focus { border-color: var(--accent); }
+
+  .save-config-btn {
+    width: 100%;
+    margin-top: 10px;
+    padding: 7px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .save-config-btn:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">
+    <div class="logo-icon">⌬</div>
+    <div>
+      <div class="logo-text">CLAUDE INSPECTOR</div>
+      <div class="logo-sub">DOM → Claude Code</div>
+    </div>
+  </div>
+  <div style="display:flex; align-items:center; gap:8px;">
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="modeOneshot" title="Run claude -p automatically via the bridge">one-shot</button>
+      <button class="mode-btn" id="modeClipboard" title="Copy to clipboard for interactive sessions">clipboard</button>
+    </div>
+    <button class="config-toggle" id="configToggle" title="Settings">⚙</button>
+  </div>
+</div>
+
+<!-- Config panel -->
+<div class="config-panel" id="configPanel">
+  <div class="config-row">
+    <span class="config-label">PROJECT</span>
+    <input type="text" class="config-input" id="projectPath" placeholder="/path/to/your/project">
+  </div>
+  <div class="config-row">
+    <span class="config-label">BRIDGE</span>
+    <input type="text" class="config-input" id="bridgeUrl" placeholder="http://localhost:3131">
+  </div>
+  <button class="save-config-btn" id="saveConfig">SAVE CONFIGURATION</button>
+</div>
+
+<!-- Main content -->
+<div class="content">
+
+  <!-- Inspector button -->
+  <button class="inspect-btn" id="inspectBtn">
+    <span class="inspect-icon">⊕</span>
+    <span id="inspectBtnText">Select element</span>
+  </button>
+
+  <!-- Element preview -->
+  <div class="element-preview" id="elementPreview">
+    <div class="preview-header">
+      <span class="preview-tag" id="previewTag"></span>
+      <span class="preview-selector" id="previewSelector"></span>
+      <button class="clear-btn" id="clearElement" title="Clear selection">✕</button>
+    </div>
+    <div class="preview-body">
+      <div class="preview-html" id="previewHtml"></div>
+      <div class="preview-meta" id="previewMeta"></div>
+    </div>
+  </div>
+
+  <!-- Prompt -->
+  <div class="prompt-section">
+    <div class="prompt-label">Prompt</div>
+    <textarea id="promptInput" placeholder="e.g. change the text color to #CC785C and increase font-size to 18px..."></textarea>
+    <div class="quick-prompts">
+      <button class="quick-btn" id="colorBtn">🎨 color</button>
+      <button class="quick-btn" data-prompt="Increase the padding to">↔ padding</button>
+      <button class="quick-btn" data-prompt="Make this element responsive">📱 responsive</button>
+      <button class="quick-btn" data-prompt="Add a hover animation">✨ hover</button>
+      <button class="quick-btn" data-prompt="Fix the alignment of">⬜ layout</button>
+    </div>
+
+    <!-- Color picker (DevTools-style) -->
+    <div class="color-panel" id="colorPanel">
+      <div class="sv-area" id="svArea">
+        <div class="sv-thumb" id="svThumb"></div>
+      </div>
+
+      <div class="picker-controls">
+        <button class="eyedropper-btn" id="pickFromPageBtn" title="Pick a color from the page">⌖</button>
+        <div class="color-preview-circle" id="colorPreview"></div>
+        <div class="slider-track hue-track" id="hueTrack">
+          <div class="slider-thumb" id="hueThumb"></div>
+        </div>
+        <div class="slider-track alpha-track" id="alphaTrack">
+          <div class="slider-thumb" id="alphaThumb"></div>
+        </div>
+      </div>
+
+      <div class="picker-input-row">
+        <input type="text" class="hex-input" id="hexInput" value="#CC785C" maxlength="9">
+        <button class="apply-color-btn" id="applyColorBtn">USE</button>
+      </div>
+
+      <div class="palette-row" id="colorPalette"></div>
+    </div>
+  </div>
+
+  <!-- Send -->
+  <div class="send-section">
+    <button class="send-btn" id="sendBtn" disabled>
+      <span>↗</span>
+      <span id="sendBtnText">SEND TO CLAUDE</span>
+    </button>
+  </div>
+
+  <div class="status" id="status"></div>
+</div>
+
+<!-- Bridge status bar -->
+<div class="bridge-status">
+  <div class="bridge-dot" id="bridgeDot"></div>
+  <span id="bridgeStatusText">Checking bridge...</span>
+  <button id="resetSessionBtn" title="Reset session" style="
+    margin-left:auto; background:none; border:none; color:var(--text3);
+    cursor:pointer; font-size:11px; font-family:var(--mono); padding:0 4px;
+    letter-spacing:0.03em; transition:color 0.15s; display:none;
+  ">↺ reset</button>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
