@@ -2,14 +2,18 @@
   "manifest_version": 3,
   "name": "Claude Code Inspector",
   "version": "3.1.0",
-  "description": "Select DOM elements and send prompts to Claude Code",
+  "description": "Seleziona elementi DOM e invia prompt a Claude Code",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
     "clipboardWrite",
     "notifications",
-    "alarms"
+    "alarms",
+    "identity",
+    "identity.email",
+    "tabs",
+    "windows"
   ],
   "host_permissions": [
     "http://localhost/*",
@@ -19,16 +23,10 @@
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    },
-    "default_icon_path": "icons/icon128.png"
-  },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   },
   "content_scripts": [
     {

@@ -1,28 +1,15 @@
 {
-  "name": "claude-code-inspector-bridge",
-  "version": "1.0.0",
-  "description": "Local bridge server connecting the Claude Code Inspector Chrome extension to the Claude Agent SDK",
+  "name": "claude-inspector-bridge",
+  "version": "2.0.0",
+  "description": "Bridge server per Claude Code Inspector - usa Claude Agent SDK",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
-  },
-  "keywords": [
-    "claude",
-    "claude-code",
-    "anthropic",
-    "agent-sdk",
-    "chrome-extension",
-    "developer-tools"
-  ],
-  "author": "Fabio Crestoni",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/nemone81/claude-code-inspector.git",
-    "directory": "bridge"
+    "start": "node server.js",
+    "start:dev": "PROJECT_PATH=/Users/f.crestoni/Library/CloudStorage/Dropbox/Claude/SaraServices\\ -\\ Simulatore\\ Welfare node server.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "latest"
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@modelcontextprotocol/sdk": "^1.12.1"
   },
   "engines": {
     "node": ">=18.0.0"

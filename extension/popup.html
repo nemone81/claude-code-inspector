@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -567,6 +567,44 @@
     background: var(--text3);
   }
 
+  /* ── Companion profile bar ── */
+  .companion-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+  }
+
+  .companion-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text3);
+    flex-shrink: 0;
+  }
+
+  .companion-dot.connected { background: var(--green); }
+
+  .companion-email {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .companion-id {
+    color: var(--text3);
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .companion-id:hover { color: var(--text); }
+
   .bridge-dot.connected { background: var(--green); animation: blink 2s ease infinite; }
   .bridge-dot.error { background: #e05f5f; }
 
@@ -662,10 +700,10 @@
   </div>
   <div style="display:flex; align-items:center; gap:8px;">
     <div class="mode-toggle">
-      <button class="mode-btn active" id="modeOneshot" title="Run claude -p automatically via the bridge">one-shot</button>
-      <button class="mode-btn" id="modeClipboard" title="Copy to clipboard for interactive sessions">clipboard</button>
+      <button class="mode-btn active" id="modeOneshot" title="Lancia claude -p in automatico">one-shot</button>
+      <button class="mode-btn" id="modeClipboard" title="Copia negli appunti per sessione interattiva">clipboard</button>
     </div>
-    <button class="config-toggle" id="configToggle" title="Settings">⚙</button>
+    <button class="config-toggle" id="configToggle" title="Impostazioni">⚙</button>
   </div>
 </div>
 
@@ -673,13 +711,13 @@
 <div class="config-panel" id="configPanel">
   <div class="config-row">
     <span class="config-label">PROJECT</span>
-    <input type="text" class="config-input" id="projectPath" placeholder="/path/to/your/project">
+    <input type="text" class="config-input" id="projectPath" placeholder="/Users/fabio/mio-progetto">
   </div>
   <div class="config-row">
     <span class="config-label">BRIDGE</span>
     <input type="text" class="config-input" id="bridgeUrl" placeholder="http://localhost:3131">
   </div>
-  <button class="save-config-btn" id="saveConfig">SAVE CONFIGURATION</button>
+  <button class="save-config-btn" id="saveConfig">SALVA CONFIGURAZIONE</button>
 </div>
 
 <!-- Main content -->
@@ -688,7 +726,7 @@
   <!-- Inspector button -->
   <button class="inspect-btn" id="inspectBtn">
     <span class="inspect-icon">⊕</span>
-    <span id="inspectBtnText">Select element</span>
+    <span id="inspectBtnText">Seleziona elemento</span>
   </button>
 
   <!-- Element preview -->
@@ -696,7 +734,7 @@
     <div class="preview-header">
       <span class="preview-tag" id="previewTag"></span>
       <span class="preview-selector" id="previewSelector"></span>
-      <button class="clear-btn" id="clearElement" title="Clear selection">✕</button>
+      <button class="clear-btn" id="clearElement" title="Rimuovi selezione">✕</button>
     </div>
     <div class="preview-body">
       <div class="preview-html" id="previewHtml"></div>
@@ -707,13 +745,13 @@
   <!-- Prompt -->
   <div class="prompt-section">
     <div class="prompt-label">Prompt</div>
-    <textarea id="promptInput" placeholder="e.g. change the text color to #CC785C and increase font-size to 18px..."></textarea>
+    <textarea id="promptInput" placeholder="Es: cambia il colore del testo in #CC785C e aumenta il font-size a 18px..."></textarea>
     <div class="quick-prompts">
-      <button class="quick-btn" id="colorBtn">🎨 color</button>
-      <button class="quick-btn" data-prompt="Increase the padding to">↔ padding</button>
-      <button class="quick-btn" data-prompt="Make this element responsive">📱 responsive</button>
-      <button class="quick-btn" data-prompt="Add a hover animation">✨ hover</button>
-      <button class="quick-btn" data-prompt="Fix the alignment of">⬜ layout</button>
+      <button class="quick-btn" id="colorBtn">🎨 colore</button>
+      <button class="quick-btn" data-prompt="Aumenta il padding a">↔ padding</button>
+      <button class="quick-btn" data-prompt="Rendi questo elemento responsive">📱 responsive</button>
+      <button class="quick-btn" data-prompt="Aggiungi un'animazione hover">✨ hover</button>
+      <button class="quick-btn" data-prompt="Correggi l'allineamento di">⬜ layout</button>
     </div>
 
     <!-- Color picker (DevTools-style) -->
@@ -723,7 +761,7 @@
       </div>
 
       <div class="picker-controls">
-        <button class="eyedropper-btn" id="pickFromPageBtn" title="Pick a color from the page">⌖</button>
+        <button class="eyedropper-btn" id="pickFromPageBtn" title="Seleziona un colore dalla pagina">⌖</button>
         <div class="color-preview-circle" id="colorPreview"></div>
         <div class="slider-track hue-track" id="hueTrack">
           <div class="slider-thumb" id="hueThumb"></div>
@@ -735,7 +773,7 @@
 
       <div class="picker-input-row">
         <input type="text" class="hex-input" id="hexInput" value="#CC785C" maxlength="9">
-        <button class="apply-color-btn" id="applyColorBtn">USE</button>
+        <button class="apply-color-btn" id="applyColorBtn">USA</button>
       </div>
 
       <div class="palette-row" id="colorPalette"></div>
@@ -746,18 +784,25 @@
   <div class="send-section">
     <button class="send-btn" id="sendBtn" disabled>
       <span>↗</span>
-      <span id="sendBtnText">SEND TO CLAUDE</span>
+      <span id="sendBtnText">INVIA A CLAUDE</span>
     </button>
   </div>
 
   <div class="status" id="status"></div>
 </div>
 
+<!-- Companion profile bar -->
+<div class="companion-bar">
+  <div class="companion-dot" id="companionDot"></div>
+  <span class="companion-email" id="companionEmail">—</span>
+  <span class="companion-id" id="companionId" title="Clicca per copiare il profileId">—</span>
+</div>
+
 <!-- Bridge status bar -->
 <div class="bridge-status">
   <div class="bridge-dot" id="bridgeDot"></div>
-  <span id="bridgeStatusText">Checking bridge...</span>
-  <button id="resetSessionBtn" title="Reset session" style="
+  <span id="bridgeStatusText">Verifica bridge...</span>
+  <button id="resetSessionBtn" title="Azzera sessione" style="
     margin-left:auto; background:none; border:none; color:var(--text3);
     cursor:pointer; font-size:11px; font-family:var(--mono); padding:0 4px;
     letter-spacing:0.03em; transition:color 0.15s; display:none;

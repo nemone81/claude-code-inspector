@@ -1,44 +1,30 @@
-// Claude Code Inspector - Background Service Worker
-// Includes a keepalive alarm to prevent the service worker from going idle
+// Claude Code Inspector + Chrome Companion - Background Service Worker v4
+// SSE per task inspector + HTTP polling per companion snapshot/focus
 
 let selectedElementInfo = null;
 let bridgeUrl = 'http://localhost:3131';
 let isConnected = false;
 let reconnectTimer = null;
 
-// ─── Keep the service worker alive ────────────────────────────────────────────
-// Service workers go idle after ~30s of inactivity.
-// This alarm wakes them up periodically.
-chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 }); // every 24s
+// ─── Mantieni il service worker sveglio ──────────────────────────────────────
+chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 }); // ogni 24s
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'keepAlive') {
-    // Touching storage is enough to wake the worker
     chrome.storage.local.get('_ka');
   }
-});
-
-// ─── Messages from popup / content script ─────────────────────────────────────
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.action === 'elementSelected') {
-    selectedElementInfo = msg.info;
-    const windowId = sender.tab?.windowId;
-    chrome.action.openPopup(windowId ? { windowId } : undefined).catch(() => {});
-  }
-  if (msg.action === 'getSelectedElement') sendResponse({ info: selectedElementInfo });
-  if (msg.action === 'clearSelectedElement') selectedElementInfo = null;
-  if (msg.action === 'getBridgeStatus')   sendResponse({ connected: isConnected, bridgeUrl });
-  if (msg.action === 'updateBridgeUrl') { bridgeUrl = msg.url; reconnectSSE(); }
-  if (msg.action === 'reloadTabNoCache') {
-    const tabId = sender.tab?.id;
-    if (tabId) chrome.tabs.reload(tabId, { bypassCache: true });
+  if (alarm.name === 'companionPoll') {
+    collectAndSendSnapshot();
   }
 });
 
-// ─── SSE connection ───────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// INSPECTOR — SSE Connection (invariato)
+// ═══════════════════════════════════════════════════════════════════════════════
+
 let abortController = null;
 
 async function connectSSE() {
-  if (abortController) return; // already running
+  if (abortController) return;
 
   abortController = new AbortController();
 
@@ -51,7 +37,7 @@ async function connectSSE() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     isConnected = true;
-    console.log('[SSE] Connected');
+    console.log('[SSE] Connesso');
     broadcastStatus(true);
 
     const reader = response.body.getReader();
@@ -85,7 +71,7 @@ async function connectSSE() {
 
   } catch (err) {
     if (err.name !== 'AbortError') {
-      console.log('[SSE] Disconnected:', err.message);
+      console.log('[SSE] Disconnesso:', err.message);
     }
   }
 
@@ -114,14 +100,14 @@ function broadcastStatus(connected) {
   chrome.runtime.sendMessage({ action: 'sseStatus', connected }).catch(() => {});
 }
 
-// ─── SSE event handling ───────────────────────────────────────────────────────
+// ─── Gestione eventi SSE ──────────────────────────────────────────────────────
 function handleSseEvent(eventName, dataStr) {
   let data;
   try { data = JSON.parse(dataStr); } catch { return; }
 
   switch (eventName) {
     case 'task_start':
-      showNotification(data.taskId, '⏳ Claude is working…', truncate(data.prompt, 80), 0);
+      showNotification(data.taskId, '⏳ Claude sta lavorando…', truncate(data.prompt, 80), 0);
       chrome.action.setBadgeText({ text: '…' });
       chrome.action.setBadgeBackgroundColor({ color: '#CC785C' });
       break;
@@ -137,19 +123,18 @@ function handleSseEvent(eventName, dataStr) {
       chrome.notifications.clear(data.taskId);
 
       if (data.success) {
-        const filesInfo = data.filesModified > 0 ? ` · ${data.filesModified} files modified` : '';
+        const filesInfo = data.filesModified > 0 ? ` · ${data.filesModified} file modificati` : '';
         showNotification(
           data.taskId + '_done',
-          '✓ Claude completed the task',
-          truncate(data.result || 'Changes applied', 120) + `\n\n⏱ ${data.durationSec}s${filesInfo}`,
+          '✓ Claude ha completato il task',
+          truncate(data.result || 'Modifiche applicate', 120) + `\n\n⏱ ${data.durationSec}s${filesInfo}`,
           2,
           true
         );
       } else {
-        showNotification(data.taskId + '_err', '✗ Task failed', truncate(data.error || 'Unknown error', 150), 2, true);
+        showNotification(data.taskId + '_err', '✗ Errore nel task', truncate(data.error || 'Errore sconosciuto', 150), 2, true);
       }
 
-      // Send a persistent banner to the active tab
       sendTaskResultToActiveTab(data);
       break;
 
@@ -161,11 +146,11 @@ function handleSseEvent(eventName, dataStr) {
   chrome.runtime.sendMessage({ action: 'sseEvent', eventName, data }).catch(() => {});
 }
 
-// ─── Chrome notifications ─────────────────────────────────────────────────────
+// ─── Chrome Notifications ─────────────────────────────────────────────────────
 function showNotification(id, title, message, priority, requireInteraction = false) {
   chrome.notifications.create(id, {
     type: 'basic',
-    iconUrl: 'icons/icon128.png',
+    iconUrl: 'icon128.png',
     title,
     message,
     priority,
@@ -178,7 +163,7 @@ chrome.notifications.onClicked.addListener((id) => {
   chrome.action.openPopup?.();
 });
 
-// ─── In-page banner ───────────────────────────────────────────────────────────
+// ─── Banner in-page + reload senza cache ──────────────────────────────────────
 function sendTaskResultToActiveTab(data) {
   chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
     const tab = tabs?.[0];
@@ -187,12 +172,204 @@ function sendTaskResultToActiveTab(data) {
   });
 }
 
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg.action === 'reloadTabNoCache') {
+    const tabId = sender.tab?.id;
+    if (tabId) chrome.tabs.reload(tabId, { bypassCache: true });
+  }
+});
+
 function truncate(str, max) {
   if (!str) return '';
   return str.length > max ? str.slice(0, max) + '…' : str;
 }
 
-// ─── Dev hot-reload (node dev-watch.js) ───────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPANION — Profile ID, HTTP Polling, Snapshot, Focus
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let companionProfileId = null;
+let companionEmail = '';
+let companionConnected = false;
+let snapshotDebounceTimer = null;
+
+// ─── Profile ID stabile ───────────────────────────────────────────────────────
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+async function initProfileId() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['companionProfileId'], (result) => {
+      if (result.companionProfileId) {
+        companionProfileId = result.companionProfileId;
+      } else {
+        companionProfileId = generateUUID();
+        chrome.storage.local.set({ companionProfileId });
+      }
+      console.log(`[Companion] ProfileId: ${companionProfileId.slice(0, 8)}…`);
+      resolve();
+    });
+  });
+}
+
+async function loadProfileEmail() {
+  try {
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
+    companionEmail = info.email || '';
+  } catch {
+    companionEmail = '';
+  }
+}
+
+// ─── HTTP Polling — Snapshot + Command reception ──────────────────────────────
+async function collectAndSendSnapshot() {
+  if (!companionProfileId) return;
+
+  await loadProfileEmail();
+
+  let windowInfos, tabInfos;
+  try {
+    const windows = await chrome.windows.getAll({ populate: true });
+
+    windowInfos = windows.map(w => ({
+      id: w.id,
+      focused: w.focused,
+      state: w.state,
+      tabCount: w.tabs?.length || 0,
+    }));
+
+    tabInfos = windows.flatMap(w =>
+      (w.tabs || []).map(t => ({
+        id: t.id,
+        windowId: w.id,
+        url: t.url || '',
+        title: t.title || '',
+        active: t.active,
+        pinned: t.pinned,
+      }))
+    );
+  } catch (err) {
+    console.log('[Companion] Errore lettura tab:', err.message);
+    return;
+  }
+
+  const snapshot = {
+    profileId: companionProfileId,
+    email: companionEmail,
+    windows: windowInfos,
+    tabs: tabInfos,
+    timestamp: Date.now(),
+  };
+
+  try {
+    const res = await fetch(`${bridgeUrl}/companion/snapshot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (!companionConnected) {
+        companionConnected = true;
+        console.log('[Companion] Connesso al bridge');
+        chrome.runtime.sendMessage({ action: 'companionStatus', connected: true }).catch(() => {});
+      }
+
+      if (data.command?.type === 'focus') {
+        handleFocusCommand(data.command.windowId);
+      }
+    } else {
+      throw new Error(`HTTP ${res.status}`);
+    }
+  } catch {
+    if (companionConnected) {
+      companionConnected = false;
+      console.log('[Companion] Bridge non raggiungibile');
+      chrome.runtime.sendMessage({ action: 'companionStatus', connected: false }).catch(() => {});
+    }
+  }
+}
+
+function debouncedSnapshot() {
+  if (snapshotDebounceTimer) clearTimeout(snapshotDebounceTimer);
+  snapshotDebounceTimer = setTimeout(() => {
+    snapshotDebounceTimer = null;
+    collectAndSendSnapshot();
+  }, 500);
+}
+
+// ─── Focus Handler ────────────────────────────────────────────────────────────
+async function handleFocusCommand(windowId) {
+  try {
+    let targetId;
+    if (windowId) {
+      targetId = windowId;
+    } else {
+      const windows = await chrome.windows.getAll();
+      const target = windows.find(w => w.focused) || windows[0];
+      targetId = target?.id;
+    }
+
+    if (targetId) {
+      await chrome.windows.update(targetId, { focused: true });
+      await fetch(`${bridgeUrl}/companion/focus_ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: companionProfileId, success: true, windowId: targetId }),
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.log('[Companion] Errore focus:', err.message);
+    await fetch(`${bridgeUrl}/companion/focus_ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profileId: companionProfileId, success: false }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {});
+  }
+}
+
+// ─── Tab/Window Event Listeners ───────────────────────────────────────────────
+chrome.tabs.onCreated.addListener(debouncedSnapshot);
+chrome.tabs.onRemoved.addListener(debouncedSnapshot);
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url || changeInfo.title) debouncedSnapshot();
+});
+chrome.windows.onCreated.addListener(debouncedSnapshot);
+chrome.windows.onRemoved.addListener(debouncedSnapshot);
+
+// Polling periodico ogni 30s via chrome.alarms (minimo consentito da Chrome)
+chrome.alarms.create('companionPoll', { periodInMinutes: 0.5 });
+
+// ─── Messaggi dal popup / content script ─────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'elementSelected') {
+    selectedElementInfo = msg.info;
+    const windowId = sender.tab?.windowId;
+    chrome.action.openPopup(windowId ? { windowId } : undefined).catch(() => {});
+  }
+  if (msg.action === 'getSelectedElement') sendResponse({ info: selectedElementInfo });
+  if (msg.action === 'clearSelectedElement') selectedElementInfo = null;
+  if (msg.action === 'getBridgeStatus')   sendResponse({ connected: isConnected, bridgeUrl });
+  if (msg.action === 'updateBridgeUrl') { bridgeUrl = msg.url; reconnectSSE(); }
+
+  if (msg.action === 'getProfileInfo') {
+    sendResponse({
+      profileId: companionProfileId,
+      email: companionEmail,
+      wsConnected: companionConnected,
+    });
+  }
+});
+
+// ─── Dev hot-reload (node dev-watch.js) ──────────────────────────────────────
 async function connectDevWatch() {
   try {
     const ctrl = new AbortController();
@@ -214,24 +391,39 @@ async function connectDevWatch() {
       buffer = lines.pop();
       for (const line of lines) {
         if (line.startsWith('event: reload')) {
-          console.log('[dev-watch] Reloading extension…');
+          console.log('[dev-watch] Ricarico estensione…');
           chrome.runtime.reload();
           return;
         }
       }
     }
   } catch {
-    // dev server not running, ignore
+    // dev server non attivo, ok
   }
   setTimeout(connectDevWatch, 3000);
 }
 connectDevWatch();
 
-// ─── Bootstrap ────────────────────────────────────────────────────────────────
-chrome.storage.local.get(['config'], (result) => {
+// ─── Avvio ────────────────────────────────────────────────────────────────────
+chrome.storage.local.get(['config'], async (result) => {
   if (result.config?.bridgeUrl) bridgeUrl = result.config.bridgeUrl;
   connectSSE();
+
+  await initProfileId();
+  await loadProfileEmail();
+  collectAndSendSnapshot();
 });
 
-chrome.runtime.onStartup.addListener(() => connectSSE());
-chrome.runtime.onInstalled.addListener(() => connectSSE());
+chrome.runtime.onStartup.addListener(async () => {
+  connectSSE();
+  await initProfileId();
+  await loadProfileEmail();
+  collectAndSendSnapshot();
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  connectSSE();
+  await initProfileId();
+  await loadProfileEmail();
+  collectAndSendSnapshot();
+});

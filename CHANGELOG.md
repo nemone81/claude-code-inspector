@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-06-30
+
+### Added
+- **Chrome Companion**: MCP server (stdio) with 3 tools for identifying connected Chrome browser profiles:
+  - `list_my_browsers` — lists connected profiles with email, alias, tab counts, and sample tabs.
+  - `find_browser` — finds profiles with tabs matching a URL/title substring.
+  - `focus_browser` — brings a specific profile's window to the foreground.
+- HTTP polling-based snapshot system: the extension sends profile data (email, windows, tabs) to the bridge every 30 seconds and on tab/window changes.
+- Stable per-profile UUID (`profileId`) persisted in `chrome.storage.local`, surviving browser restarts.
+- Profile email collection via `chrome.identity.getProfileUserInfo()`.
+- Alias support: map profileIds to friendly names via `~/.chrome-companion/aliases.json` (auto-reloaded on change).
+- Companion bar in the extension popup showing profile email, profileId (click to copy), and bridge connection status.
+- HTTP debug endpoints: `GET /browsers`, `GET /browsers/find?q=`, `POST /browsers/:id/focus`.
+
+### Changed
+- Bridge server upgraded to v4.0: now acts as both HTTP+SSE bridge AND MCP stdio server in a single process.
+- All logging moved to stderr to avoid interfering with MCP stdio protocol on stdout.
+- New extension permissions: `identity`, `identity.email`, `tabs`, `windows`.
+- Bridge dependency: added `@modelcontextprotocol/sdk`.
+
 ## [Unreleased]
 
 ### Added

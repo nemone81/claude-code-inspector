@@ -26,21 +26,21 @@ async function loadConfig() {
 }
 
 async function loadSelectedElement() {
-  // Try the background first (last fresh selection)
+  // Prova prima dal background (selezione appena fatta)
   const res = await chrome.runtime.sendMessage({ action: 'getSelectedElement' });
   if (res?.info) {
     showElement(res.info);
     return;
   }
 
-  // Fall back to the active tab's content script
+  // Poi dalla tab corrente
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
     try {
       const response = await chrome.tabs.sendMessage(tab.id, { action: 'getInspectorState' });
       if (response?.selected) showElement(response.selected);
     } catch (e) {
-      // content script not injected yet, that's fine
+      // content script non iniettato ancora, ok
     }
   }
 }
@@ -63,7 +63,7 @@ function bindEvents() {
   // Clear element
   document.getElementById('clearElement').addEventListener('click', clearElement);
 
-  // Quick prompts (excludes colorBtn, which has its own logic)
+  // Quick prompts (esclude colorBtn, che ha la sua logica)
   document.querySelectorAll('.quick-btn[data-prompt]').forEach(btn => {
     btn.addEventListener('click', () => {
       const ta = document.getElementById('promptInput');
@@ -160,14 +160,14 @@ function initColorPicker() {
       h = hsv.h; s = hsv.s; v = hsv.v; a = parsed.a;
       render();
     } else {
-      render(); // restore the previous value
+      render(); // ripristina valore corrente
     }
   });
 
   applyBtn.addEventListener('click', () => {
     const ta = document.getElementById('promptInput');
     const existing = ta.value.trim();
-    const prefix = existing ? existing + ' ' : 'Change the color to ';
+    const prefix = existing ? existing + ' ' : 'Cambia il colore in ';
     ta.value = prefix + currentHex();
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -177,7 +177,7 @@ function initColorPicker() {
 
   pickBtn.addEventListener('click', async () => {
     if (!window.EyeDropper) {
-      showStatus('EyeDropper not supported in this browser', 'error');
+      showStatus('EyeDropper non supportato in questo browser', 'error');
       return;
     }
     try {
@@ -186,7 +186,7 @@ function initColorPicker() {
       const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
       h = hsv.h; s = hsv.s; v = hsv.v; a = 1;
       render();
-    } catch { /* user cancelled */ }
+    } catch { /* annullato */ }
   });
 
   function currentHex() {
@@ -319,7 +319,7 @@ function setMode(m) {
   document.getElementById('modeClipboard').classList.toggle('active', m === 'clipboard');
 
   const btn = document.getElementById('sendBtnText');
-  btn.textContent = m === 'oneshot' ? 'SEND TO CLAUDE' : 'COPY TO CLIPBOARD';
+  btn.textContent = m === 'oneshot' ? 'INVIA A CLAUDE' : 'COPIA NEGLI APPUNTI';
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -328,7 +328,7 @@ async function saveConfig() {
   config.bridgeUrl = document.getElementById('bridgeUrl').value.trim() || 'http://localhost:3131';
   await chrome.storage.local.set({ config });
   document.getElementById('configPanel').classList.remove('open');
-  showStatus('Configuration saved ✓', 'success');
+  showStatus('Configurazione salvata ✓', 'success');
   checkBridgeStatus();
 }
 
@@ -344,14 +344,14 @@ async function toggleInspector() {
     const res = await chrome.tabs.sendMessage(tab.id, { action: 'toggleInspector' });
     if (res?.active) {
       btn.classList.add('active');
-      btnText.textContent = 'Inspector active — click an element';
-      window.close(); // close popup so the page becomes interactive
+      btnText.textContent = 'Ispettore attivo — clicca sulla pagina';
+      window.close(); // chiudi popup così la pagina è accessibile
     } else {
       btn.classList.remove('active');
-      btnText.textContent = 'Select element';
+      btnText.textContent = 'Seleziona elemento';
     }
   } catch (e) {
-    // The content script may not be injected yet — inject it manually
+    // Potrebbe servire iniettare il content script manualmente
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ['content.js']
@@ -360,7 +360,7 @@ async function toggleInspector() {
       target: { tabId: tab.id },
       files: ['content.css']
     });
-    // Retry
+    // Riprova
     await chrome.tabs.sendMessage(tab.id, { action: 'toggleInspector' });
     window.close();
   }
@@ -417,15 +417,15 @@ function buildMessage(prompt, elementInfo) {
   let msg = prompt;
 
   if (elementInfo) {
-    msg += `\n\n---\nSELECTED ELEMENT:\n`;
+    msg += `\n\n---\nELEMENTO SELEZIONATO:\n`;
     msg += `Tag: <${elementInfo.tag}>\n`;
-    msg += `CSS selector: ${elementInfo.selector}\n`;
+    msg += `Selettore CSS: ${elementInfo.selector}\n`;
     if (elementInfo.id) msg += `ID: #${elementInfo.id}\n`;
-    if (elementInfo.classes.length) msg += `Classes: ${elementInfo.classes.join(', ')}\n`;
-    msg += `Dimensions: ${elementInfo.dimensions.width}×${elementInfo.dimensions.height}px\n`;
-    msg += `Computed styles: font-size=${elementInfo.styles.fontSize}, color=${elementInfo.styles.color}, bg=${elementInfo.styles.backgroundColor}\n`;
+    if (elementInfo.classes.length) msg += `Classi: ${elementInfo.classes.join(', ')}\n`;
+    msg += `Dimensioni: ${elementInfo.dimensions.width}×${elementInfo.dimensions.height}px\n`;
+    msg += `Stili computati: font-size=${elementInfo.styles.fontSize}, color=${elementInfo.styles.color}, bg=${elementInfo.styles.backgroundColor}\n`;
     msg += `\nHTML:\n${elementInfo.html.slice(0, 800)}\n`;
-    msg += `\nPage: ${elementInfo.pageUrl}\n`;
+    msg += `\nPagina: ${elementInfo.pageUrl}\n`;
     msg += `---`;
   }
 
@@ -451,9 +451,9 @@ async function sendToClaude() {
 async function sendViaClipboard(message) {
   try {
     await navigator.clipboard.writeText(message);
-    showStatus('✓ Copied to clipboard!\nSwitch to your terminal and press Cmd+V → Enter', 'success');
+    showStatus('✓ Copiato negli appunti!\nTorna nel terminale e premi Cmd+V → Invio', 'success');
   } catch (e) {
-    showStatus('Failed to copy: ' + e.message, 'error');
+    showStatus('Errore nel copiare: ' + e.message, 'error');
   }
 }
 
@@ -473,15 +473,15 @@ async function sendViaBridge(message) {
     if (!res.ok) throw new Error(`Bridge error: ${res.status}`);
 
     const data = await res.json();
-    showStatus(`✓ Sent to Claude Code!\n${data.message || ''}`, 'success');
+    showStatus(`✓ Inviato a Claude Code!\n${data.message || ''}`, 'success');
 
   } catch (e) {
     if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-      showStatus('Bridge unreachable.\nStart the bridge with:\n  cd bridge && node server.js', 'error');
+      showStatus('Bridge non raggiungibile.\nAvvia il bridge server con:\n  cd bridge && node server.js', 'error');
     } else {
-      showStatus('Error: ' + e.message, 'error');
+      showStatus('Errore: ' + e.message, 'error');
     }
-    // Auto-fallback to clipboard
+    // Fallback automatico a clipboard
     await sendViaClipboard(message);
   }
 }
@@ -498,7 +498,7 @@ async function checkBridgeStatus() {
     if (res.ok) {
       const data = await res.json();
       dot.className = 'bridge-dot connected';
-      const sessionInfo = data.sessionId ? `session ${data.sessionId}` : 'new session';
+      const sessionInfo = data.sessionId ? `sessione ${data.sessionId}` : 'nuova sessione';
       txt.textContent = `bridge · ${sessionInfo}`;
       resetBtn.style.display = data.sessionId ? 'block' : 'none';
     } else {
@@ -506,7 +506,7 @@ async function checkBridgeStatus() {
     }
   } catch {
     dot.className = 'bridge-dot error';
-    txt.textContent = 'bridge offline · clipboard fallback';
+    txt.textContent = 'bridge offline · clipboard attivo';
     resetBtn.style.display = 'none';
   }
 }
@@ -515,10 +515,10 @@ document.getElementById('resetSessionBtn')?.addEventListener('click', async () =
   const bridgeUrl = config.bridgeUrl || 'http://localhost:3131';
   try {
     await fetch(`${bridgeUrl}/reset`, { method: 'POST' });
-    showStatus('Session reset ✓\nThe next request will start a fresh session', 'success');
+    showStatus('Sessione azzerata ✓\nLa prossima chiamata inizia una nuova sessione', 'success');
     checkBridgeStatus();
   } catch {
-    showStatus('Bridge unreachable', 'error');
+    showStatus('Bridge non raggiungibile', 'error');
   }
 });
 
@@ -540,16 +540,16 @@ chrome.runtime.onMessage.addListener((msg) => {
     const txt = document.getElementById('bridgeStatusText');
     if (!msg.connected) {
       dot.className = 'bridge-dot error';
-      txt.textContent = 'bridge offline · reconnecting…';
+      txt.textContent = 'bridge offline · riconnessione…';
     }
   }
 
   if (msg.action === 'sseEvent') {
     const { eventName, data } = msg;
     if (eventName === 'task_start') {
-      showStatus('⏳ Claude is working…', 'success');
+      showStatus('⏳ Claude sta lavorando…', 'success');
       document.getElementById('sendBtn').disabled = true;
-      document.getElementById('sendBtnText').textContent = 'PROCESSING…';
+      document.getElementById('sendBtnText').textContent = 'IN ELABORAZIONE…';
     }
     if (eventName === 'task_progress') {
       showStatus(`⚙ ${data.tool}${data.detail ? ': ' + data.detail.slice(0, 50) : ''}`, 'success');
@@ -558,13 +558,58 @@ chrome.runtime.onMessage.addListener((msg) => {
       const sendBtn = document.getElementById('sendBtn');
       const sendBtnText = document.getElementById('sendBtnText');
       sendBtn.disabled = false;
-      sendBtnText.textContent = mode === 'oneshot' ? 'SEND TO CLAUDE' : 'COPY TO CLIPBOARD';
+      sendBtnText.textContent = mode === 'oneshot' ? 'INVIA A CLAUDE' : 'COPIA NEGLI APPUNTI';
       if (data.success) {
-        showStatus(`✓ Completed in ${data.durationSec}s\n${(data.result || '').slice(0, 200)}`, 'success');
+        showStatus(`✓ Completato in ${data.durationSec}s\n${(data.result || '').slice(0, 200)}`, 'success');
       } else {
-        showStatus(`✗ Error: ${data.error}`, 'error');
+        showStatus(`✗ Errore: ${data.error}`, 'error');
       }
       checkBridgeStatus();
     }
   }
+
+  if (msg.action === 'companionStatus') {
+    updateCompanionUI({ wsConnected: msg.connected });
+  }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPANION — Profile info UI
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function updateCompanionUI(info) {
+  const dot = document.getElementById('companionDot');
+  const emailEl = document.getElementById('companionEmail');
+  const idEl = document.getElementById('companionId');
+
+  if (info.wsConnected) {
+    dot.classList.add('connected');
+  } else {
+    dot.classList.remove('connected');
+  }
+
+  if (info.email) emailEl.textContent = info.email;
+  if (info.profileId) {
+    idEl.textContent = info.profileId.slice(0, 8) + '…';
+    idEl.title = `ProfileId: ${info.profileId}\nClicca per copiare`;
+  }
+}
+
+(function initCompanionUI() {
+  chrome.runtime.sendMessage({ action: 'getProfileInfo' }, (response) => {
+    if (response) updateCompanionUI(response);
+  });
+
+  document.getElementById('companionId')?.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'getProfileInfo' }, (response) => {
+      if (response?.profileId) {
+        navigator.clipboard.writeText(response.profileId).then(() => {
+          const el = document.getElementById('companionId');
+          const orig = el.textContent;
+          el.textContent = 'copiato ✓';
+          setTimeout(() => { el.textContent = orig; }, 1500);
+        });
+      }
+    });
+  });
+})();
