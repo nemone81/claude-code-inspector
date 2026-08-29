@@ -1,305 +1,475 @@
 #!/usr/bin/env node
-// Claude Code Inspector - Bridge Server
-// Agent SDK + persistent sessions + SSE notifications
+// Claude Code Inspector — Bridge Server v4
+// Agent SDK warm sessions · per-project queues · WebSocket · token auth
 
 const http = require('http');
-const { execSync } = require('child_process');
 const fs = require('fs');
-const path = require('path');
+const crypto = require('crypto');
+
+const { loadOrCreateToken, authorize, isOriginAllowed, tokenFromRequest, timingSafeEqual } = require('./lib/auth');
+const { SessionPool, MODES } = require('./lib/sessions');
+const { diffFiles, undoFiles } = require('./lib/git-tools');
+const { CompanionStore, ALIAS_FILE } = require('./lib/companion');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3131;
 const PROJECT_PATH = process.env.PROJECT_PATH || process.cwd();
-const SESSION_FILE = path.join(__dirname, '.session_id');
-// Optional: override the path to the Claude Code binary.
-// When unset, the Agent SDK looks up its bundled binary inside node_modules.
 const CLAUDE_PATH = process.env.CLAUDE_PATH || null;
+const VERSION = '4.0.0';
 
-// ─── Verify Agent SDK ─────────────────────────────────────────────────────────
+// ─── Agent SDK ────────────────────────────────────────────────────────────────
 let sdk;
 try {
   sdk = require('@anthropic-ai/claude-agent-sdk');
-} catch (e) {
+} catch {
   console.error('\n✗ Claude Agent SDK not found. Run: npm install\n');
   process.exit(1);
 }
-const { query } = sdk;
 
-// ─── SSE client registry ──────────────────────────────────────────────────────
-const sseClients = new Set();
+const TOKEN = loadOrCreateToken();
+const pool = new SessionPool({ query: sdk.query, claudePath: CLAUDE_PATH });
 
-function addSseClient(res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-  });
-  res.write(':ok\n\n');
-  sseClients.add(res);
-  console.log(`[SSE] Client connected (total: ${sseClients.size})`);
-  res.on('close', () => {
-    sseClients.delete(res);
-    console.log(`[SSE] Client disconnected (total: ${sseClients.size})`);
-  });
+// ─── WebSocket clients ────────────────────────────────────────────────────────
+let WebSocketServer;
+try {
+  ({ WebSocketServer } = require('ws'));
+} catch {
+  console.error('\n✗ "ws" package not found. Run: npm install\n');
+  process.exit(1);
 }
 
-function broadcast(eventName, data) {
-  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const client of sseClients) {
-    try { client.write(payload); } catch { sseClients.delete(client); }
+const wsClients = new Set();
+const pendingCaptures = new Map(); // requestId → { resolve, timer }
+
+function broadcast(type, data) {
+  const payload = JSON.stringify({ type, ...data });
+  for (const client of wsClients) {
+    try { client.send(payload); } catch { wsClients.delete(client); }
   }
 }
 
-// Heartbeat every 25s to keep connections alive
-setInterval(() => {
-  for (const client of sseClients) {
-    try { client.write(':ping\n\n'); } catch { sseClients.delete(client); }
-  }
-}, 25000);
+// Ask the extension to reload a tab and re-capture an element. Resolves with
+// { element, screenshot } or rejects on timeout / capture error.
+function requestCapture({ tabId, selector }) {
+  if (!wsClients.size) return Promise.reject(new Error('extension not connected'));
+  const requestId = crypto.randomBytes(8).toString('hex');
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingCaptures.delete(requestId);
+      reject(new Error('capture timed out'));
+    }, 45000);
+    pendingCaptures.set(requestId, { resolve, reject, timer });
+    broadcast('capture_request', { requestId, tabId, selector, screenshot: true });
+  });
+}
 
-// ─── Persistent session ID ────────────────────────────────────────────────────
-function loadSessionId() {
-  try {
-    if (fs.existsSync(SESSION_FILE)) {
-      const id = fs.readFileSync(SESSION_FILE, 'utf8').trim();
-      if (id) return id;
+function handleWsMessage(ws, raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+
+  switch (msg.type) {
+    case 'selection':
+      lastSelection = { elements: msg.elements || [], pageUrl: msg.pageUrl || null, at: new Date().toISOString() };
+      break;
+
+    case 'capture_response': {
+      const pending = pendingCaptures.get(msg.requestId);
+      if (!pending) return;
+      pendingCaptures.delete(msg.requestId);
+      clearTimeout(pending.timer);
+      if (msg.error) pending.reject(new Error(msg.error));
+      else pending.resolve({ element: msg.element || null, screenshot: msg.screenshot || null });
+      break;
     }
-  } catch {}
-  return null;
-}
-function saveSessionId(id) {
-  try { fs.writeFileSync(SESSION_FILE, id, 'utf8'); } catch {}
-}
-function clearSessionId() {
-  try { if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE); } catch {}
+
+    // ── Companion: browser profile snapshots + focus acks ──
+    case 'companion_snapshot':
+      if (!msg.profileId) return;
+      ws.profileId = msg.profileId;
+      companion.upsert(msg.profileId, {
+        email: msg.email || '',
+        windows: msg.windows || [],
+        tabs: msg.tabs || [],
+        timestamp: msg.timestamp || Date.now(),
+      });
+      break;
+
+    case 'companion_ping':
+      if (!msg.profileId) return;
+      ws.profileId = msg.profileId;
+      companion.touch(msg.profileId);
+      break;
+
+    case 'focus_ack':
+      if (!msg.profileId) return;
+      companion.resolveFocus(msg.profileId, {
+        success: !!msg.success,
+        windowId: msg.windowId || null,
+        error: msg.error || undefined,
+      });
+      break;
+  }
 }
 
-let currentSessionId = loadSessionId();
-if (currentSessionId) console.log(`[→] Session resumed: ${currentSessionId.slice(0, 8)}…`);
-
-// ─── CORS / helpers ───────────────────────────────────────────────────────────
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+// Send a focus command to the extension instance for one profile and await its ack.
+function requestFocus(profileId) {
+  const client = [...wsClients].find((c) => c.profileId === profileId);
+  if (!client) return Promise.resolve({ success: false, error: 'Profile not connected over WebSocket' });
+  const result = companion.awaitFocus(profileId);
+  try { client.send(JSON.stringify({ type: 'focus_request', profileId })); } catch { /* timeout will fire */ }
+  return result;
 }
-function json(res, code, data) {
-  setCors(res);
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let lastSelection = null;      // { elements, pageUrl, at } — served to the MCP tool
+const tasks = new Map();       // taskId → task record (for diff / undo)
+let taskCounter = 0;
+const companion = new CompanionStore();
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function setCors(res, req) {
+  const origin = req.headers.origin;
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Inspector-Token');
+  }
+}
+
+function json(res, req, code, data) {
+  setCors(res, req);
   res.writeHead(code, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', c => body += c);
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 25 * 1024 * 1024) { req.destroy(); reject(new Error('body too large')); return; }
+      body += c;
+    });
     req.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve({}); } });
     req.on('error', reject);
   });
 }
 
-// ─── Run via the Agent SDK ────────────────────────────────────────────────────
-async function runWithAgentSDK(prompt, projectPath, taskId, isRetry = false) {
-  // The Chrome extension may pass shell-escaped paths (e.g. "my\ project").
-  // Strip backslash-escaped spaces back to literal spaces.
-  const rawDir = projectPath || PROJECT_PATH;
-  const dir = rawDir.replace(/\\ /g, ' ');
+function resolveProjectDir(projectPath) {
+  // The extension may pass shell-escaped paths ("my\ project").
+  const dir = (projectPath || PROJECT_PATH).replace(/\\ /g, ' ');
+  if (!fs.existsSync(dir)) throw new Error(`Project directory not found: ${dir}`);
+  return dir;
+}
 
-  if (!fs.existsSync(dir)) {
-    const err = new Error(`Project directory not found: ${dir}`);
-    console.error(`[✗] ${err.message}`);
-    broadcast('task_done', { taskId, success: false, error: err.message });
-    throw err;
-  }
+function imageBlocks(images) {
+  return (images || [])
+    .filter((img) => img && img.data && /^image\/(png|jpeg|webp|gif)$/.test(img.media_type || ''))
+    .slice(0, 4)
+    .map((img) => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.media_type, data: img.data },
+    }));
+}
 
-  console.log(`\n[→] Task ${taskId} · Project: ${dir}`);
-  console.log(`[→] Session: ${currentSessionId ? currentSessionId.slice(0, 8) + '…' : 'new'}`);
-  console.log(`[→] Prompt: ${prompt.slice(0, 120)}${prompt.length > 120 ? '…' : ''}`);
+function truncate(str, max) {
+  const s = String(str || '');
+  return s.length > max ? s.slice(0, max) + '…' : s;
+}
 
-  // Notify the extension that the task has started
-  broadcast('task_start', { taskId, prompt: prompt.slice(0, 100) });
+// ─── Task execution ───────────────────────────────────────────────────────────
+async function runTask(task) {
+  const { taskId, dir, mode } = task;
+  console.log(`\n[→] Task ${taskId} · ${mode} · ${dir}`);
+  console.log(`[→] Prompt: ${truncate(task.prompt, 120)}`);
 
-  const options = {
-    cwd: dir,
-    permissionMode: 'acceptEdits',
-    allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
-    allowDangerouslySkipPermissions: true,
-    settingSources: ['project'],
-  };
-  if (CLAUDE_PATH) options.pathToClaudeCodeExecutable = CLAUDE_PATH;
-  if (currentSessionId) options.resume = currentSessionId;
+  broadcast('task_start', { taskId, tabId: task.tabId, prompt: truncate(task.prompt, 100) });
 
-  let newSessionId = null;
-  let resultText = '';
-  let toolsUsed = [];
+  const contentBlocks = [{ type: 'text', text: task.prompt }, ...imageBlocks(task.images)];
 
   try {
-    const q = query({ prompt, options });
+    const result = await pool.run({
+      dir,
+      mode,
+      taskId,
+      contentBlocks,
+      onProgress: ({ tool, detail }) => {
+        console.log(`   ↳ ${tool}${detail ? ': ' + detail : ''}`);
+        broadcast('task_progress', { taskId, tabId: task.tabId, tool, detail });
+      },
+    });
 
-    for await (const msg of q) {
-      if (msg.type === 'system' && msg.subtype === 'init') {
-        newSessionId = msg.session_id;
-        console.log(`[✓] Session active: ${newSessionId.slice(0, 8)}…`);
-      }
+    task.files = result.files;
+    task.status = 'done';
+    console.log(`[✓] Completed in ${result.durationSec}s · ${result.turns} turns · $${result.costUsd?.toFixed(4) || '?'}`);
 
-      if (msg.type === 'assistant' && msg.message?.content) {
-        for (const block of msg.message.content) {
-          if (block.type === 'tool_use') {
-            const input = block.input || {};
-            const detail = input.file_path || input.command?.slice(0, 50) || '';
-            const toolInfo = `${block.name}${detail ? ': ' + detail : ''}`;
-            console.log(`   ↳ ${toolInfo}`);
-            toolsUsed.push(block.name);
-            // Real-time progress notification
-            broadcast('task_progress', { taskId, tool: block.name, detail });
-          }
-        }
-      }
-
-      if (msg.type === 'result') {
-        if (msg.subtype === 'success') {
-          resultText = msg.result || '';
-          const durationSec = (msg.duration_ms / 1000).toFixed(1);
-          console.log(`[✓] Completed in ${durationSec}s · ${msg.num_turns} turns · $${msg.total_cost_usd?.toFixed(4) || '?'}`);
-
-          if (newSessionId) {
-            currentSessionId = newSessionId;
-            saveSessionId(newSessionId);
-          }
-
-          // Success notification → the extension will display a Chrome notification
-          broadcast('task_done', {
-            taskId,
-            success: true,
-            result: resultText.slice(0, 300),
-            durationSec,
-            turns: msg.num_turns,
-            filesModified: [...new Set(toolsUsed.filter(t => ['Write', 'Edit'].includes(t)))].length,
-          });
-
-          return { success: true, output: resultText };
-
-        } else {
-          const errors = msg.errors?.join(', ') || msg.subtype;
-          throw new Error(errors);
-        }
-      }
-    }
-
-  } catch (err) {
-    // Session expired → retry without resume
-    if (!isRetry && (err.message?.includes('session') || err.message?.includes('resume'))) {
-      console.warn('[!] Invalid session, restarting…');
-      clearSessionId();
-      currentSessionId = null;
-      return runWithAgentSDK(prompt, projectPath, taskId, true);
-    }
-
-    console.error(`[✗] Task ${taskId} error:`, err.message);
     broadcast('task_done', {
       taskId,
-      success: false,
-      error: err.message.slice(0, 200),
+      tabId: task.tabId,
+      success: true,
+      result: truncate(result.output, 300),
+      durationSec: result.durationSec,
+      turns: result.turns,
+      filesModified: result.files.length,
+      canUndo: result.files.length > 0,
     });
-    throw err;
+
+    if (task.verify && task.tabId && task.selector && result.files.length) {
+      await runVerification(task, result);
+    }
+  } catch (err) {
+    task.status = 'failed';
+    console.error(`[✗] Task ${taskId} error:`, err.message);
+    broadcast('task_done', { taskId, tabId: task.tabId, success: false, error: truncate(err.message, 200) });
   }
 }
 
-function copyToClipboard(text) {
+// Closed verification loop: reload the tab, re-capture the element, and let
+// Claude self-check (and fix) its own change. Single round, no recursion.
+async function runVerification(task, editResult) {
+  const { taskId } = task;
+  console.log(`[→] Verifying ${taskId}…`);
+  broadcast('verify_start', { taskId, tabId: task.tabId });
+
   try {
-    execSync(`echo '${text.replace(/'/g, "'\\''")}' | pbcopy`);
-    return true;
-  } catch { return false; }
+    const captured = await requestCapture({ tabId: task.tabId, selector: task.selector });
+
+    let text = 'VERIFICATION STEP — the page was reloaded after your changes.\n';
+    text += `Original request: ${truncate(task.prompt, 1500)}\n\n`;
+    if (captured.element) {
+      text += 'The selected element, re-captured after reload:\n';
+      text += JSON.stringify(captured.element, null, 2).slice(0, 3000);
+    } else {
+      text += 'The originally selected element could NOT be found after reload (its selector no longer matches).';
+    }
+    if (captured.screenshot) text += '\n\nA fresh screenshot of the element is attached.';
+    text += '\n\nCheck whether the original request is now correctly implemented. ';
+    text += 'If it is, reply with a one-line confirmation. If not, fix the code accordingly.';
+
+    const blocks = [{ type: 'text', text }, ...imageBlocks(captured.screenshot ? [captured.screenshot] : [])];
+
+    const result = await pool.run({
+      dir: task.dir,
+      mode: task.mode,
+      taskId: `${taskId}_verify`,
+      contentBlocks: blocks,
+      onProgress: ({ tool, detail }) => broadcast('task_progress', { taskId, tabId: task.tabId, tool, detail, phase: 'verify' }),
+    });
+
+    // Any extra file the fix touched should stay undoable too.
+    task.files = [...new Set([...(task.files || []), ...result.files])];
+    console.log(`[✓] Verification done: ${truncate(result.output, 100)}`);
+    broadcast('verify_done', {
+      taskId,
+      tabId: task.tabId,
+      success: true,
+      fixed: result.files.length > 0,
+      result: truncate(result.output, 300),
+    });
+  } catch (err) {
+    console.error(`[✗] Verification ${taskId} error:`, err.message);
+    broadcast('verify_done', { taskId, tabId: task.tabId, success: false, error: truncate(err.message, 200) });
+  }
+  void editResult;
 }
 
 // ─── HTTP server ──────────────────────────────────────────────────────────────
-let taskCounter = 0;
-
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
-    setCors(res); res.writeHead(204); res.end(); return;
-  }
-
-  const url = req.url;
-
-  // GET /events — SSE stream for the extension
-  if (req.method === 'GET' && url === '/events') {
-    addSseClient(res);
-    return; // keep the connection open
-  }
-
-  // GET /health
-  if (req.method === 'GET' && url === '/health') {
-    json(res, 200, {
-      status: 'ok',
-      mode: 'agent-sdk-sessions-sse',
-      projectPath: PROJECT_PATH,
-      sessionId: currentSessionId ? currentSessionId.slice(0, 8) + '…' : null,
-      sseClients: sseClients.size,
-      version: '3.0.0'
-    });
+    setCors(res, req);
+    res.writeHead(204);
+    res.end();
     return;
   }
 
-  // POST /send
-  if (req.method === 'POST' && url === '/send') {
-    try {
-      const body = await readBody(req);
-      const { prompt, projectPath } = body;
-      if (!prompt) { json(res, 400, { error: 'missing prompt' }); return; }
+  const url = new URL(req.url, 'http://localhost');
+  const route = `${req.method} ${url.pathname}`;
 
-      const taskId = `task_${++taskCounter}_${Date.now()}`;
-      json(res, 200, { message: 'Started', taskId, sessionId: currentSessionId?.slice(0, 8) || null });
+  // Unauthenticated ping: enough to show "bridge up", nothing more.
+  if (route === 'GET /health' && !tokenFromRequest(req)) {
+    json(res, req, 200, { status: 'ok', version: VERSION, auth: 'token required' });
+    return;
+  }
 
-      runWithAgentSDK(prompt, projectPath, taskId).catch(err => {
-        console.error('[✗] Clipboard fallback:', err.message);
-        copyToClipboard(prompt);
-      });
+  const auth = authorize(req, TOKEN);
+  if (!auth.ok) {
+    json(res, req, auth.code, { error: auth.error });
+    return;
+  }
 
-    } catch (err) {
-      json(res, 500, { error: err.message });
+  try {
+    switch (route) {
+      case 'GET /health': {
+        json(res, req, 200, {
+          status: 'ok',
+          version: VERSION,
+          mode: 'agent-sdk-warm-sessions-ws-companion',
+          defaultProject: PROJECT_PATH,
+          sessions: pool.status(),
+          wsClients: wsClients.size,
+          browsers: companion.list().length,
+        });
+        return;
+      }
+
+      case 'POST /send': {
+        const body = await readBody(req);
+        const { prompt, projectPath, tabId, verify, elements, images } = body;
+        const mode = MODES[body.mode] ? body.mode : 'edit';
+        if (!prompt) { json(res, req, 400, { error: 'missing prompt' }); return; }
+
+        let dir;
+        try { dir = resolveProjectDir(projectPath); } catch (e) {
+          json(res, req, 400, { error: e.message });
+          return;
+        }
+
+        const taskId = `task_${++taskCounter}_${Date.now()}`;
+        const task = {
+          taskId,
+          dir,
+          mode,
+          prompt,
+          images,
+          tabId: tabId || null,
+          verify: !!verify && mode === 'edit',
+          selector: elements?.[0]?.selector || null,
+          files: [],
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+        };
+        tasks.set(taskId, task);
+        if (tasks.size > 50) tasks.delete(tasks.keys().next().value);
+
+        json(res, req, 200, { message: 'queued', taskId, mode });
+        runTask(task); // runs in background; queued per project inside the pool
+        return;
+      }
+
+      case 'GET /diff': {
+        const task = tasks.get(url.searchParams.get('taskId'));
+        if (!task) { json(res, req, 404, { error: 'unknown task' }); return; }
+        const result = await diffFiles(task.dir, task.files);
+        json(res, req, 200, { taskId: task.taskId, files: task.files, ...result });
+        return;
+      }
+
+      case 'POST /undo': {
+        const body = await readBody(req);
+        const task = tasks.get(body.taskId);
+        if (!task) { json(res, req, 404, { error: 'unknown task' }); return; }
+        if (!task.files.length) { json(res, req, 400, { error: 'task modified no files' }); return; }
+        const result = await undoFiles(task.dir, task.files, `claude-inspector undo ${task.taskId}`);
+        task.status = 'undone';
+        console.log(`[↩] Undid ${task.taskId}: ${result.stashed.join(', ')}`);
+        json(res, req, 200, { message: 'Changes stashed (recover with: git stash pop)', ...result });
+        return;
+      }
+
+      case 'POST /reset': {
+        const body = await readBody(req);
+        pool.reset(body.projectPath ? resolveProjectDir(body.projectPath) : null);
+        console.log('[→] Session(s) cleared');
+        broadcast('session_reset', {});
+        json(res, req, 200, { message: 'Session cleared' });
+        return;
+      }
+
+      case 'GET /session': {
+        json(res, req, 200, { sessions: pool.status(), defaultProject: PROJECT_PATH });
+        return;
+      }
+
+      case 'GET /selected': {
+        json(res, req, 200, lastSelection || { elements: [], at: null });
+        return;
+      }
+
+      // ── Companion endpoints ──
+      case 'GET /browsers': {
+        json(res, req, 200, { browsers: companion.list() });
+        return;
+      }
+
+      case 'GET /browsers/find': {
+        json(res, req, 200, { matches: companion.find(url.searchParams.get('q') || '') });
+        return;
+      }
+
+      default: {
+        const focusMatch = url.pathname.match(/^\/browsers\/([^/]+)\/focus$/);
+        if (req.method === 'POST' && focusMatch) {
+          const id = decodeURIComponent(focusMatch[1]);
+          if (!companion.has(id)) {
+            json(res, req, 404, { success: false, error: 'Profile not found' });
+            return;
+          }
+          json(res, req, 200, await requestFocus(id));
+          return;
+        }
+        json(res, req, 404, { error: 'Not found' });
+      }
     }
-    return;
+  } catch (err) {
+    json(res, req, 500, { error: err.message });
   }
-
-  // POST /reset
-  if (req.method === 'POST' && url === '/reset') {
-    clearSessionId(); currentSessionId = null;
-    console.log('[→] Session cleared');
-    broadcast('session_reset', {});
-    json(res, 200, { message: 'Session cleared' });
-    return;
-  }
-
-  // GET /session
-  if (req.method === 'GET' && url === '/session') {
-    json(res, 200, { sessionId: currentSessionId || null, projectPath: PROJECT_PATH });
-    return;
-  }
-
-  json(res, 404, { error: 'Not found' });
 });
 
+// ─── WebSocket endpoint (/ws) ─────────────────────────────────────────────────
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, 'http://localhost');
+  const token = url.searchParams.get('token') || '';
+  if (url.pathname !== '/ws' || !isOriginAllowed(req.headers.origin) || !timingSafeEqual(token, TOKEN)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wsClients.add(ws);
+    console.log(`[WS] Client connected (total: ${wsClients.size})`);
+    ws.on('message', (raw) => handleWsMessage(ws, raw));
+    ws.on('close', () => {
+      wsClients.delete(ws);
+      if (ws.profileId) companion.remove(ws.profileId);
+      console.log(`[WS] Client disconnected (total: ${wsClients.size})`);
+    });
+    ws.on('error', () => wsClients.delete(ws));
+  });
+});
+
+// ─── Startup ──────────────────────────────────────────────────────────────────
 server.listen(PORT, '127.0.0.1', () => {
   console.log('\n╔═══════════════════════════════════════╗');
-  console.log('║  Claude Inspector Bridge              ║');
-  console.log('║  Agent SDK · Sessions · SSE           ║');
+  console.log('║  Claude Inspector Bridge v4           ║');
+  console.log('║  Agent SDK · Warm sessions · WS       ║');
   console.log('╚═══════════════════════════════════════╝');
   console.log(`\n✓ Bridge listening on http://localhost:${PORT}`);
-  console.log(`✓ Project: ${PROJECT_PATH}`);
-  console.log(`✓ Session: ${currentSessionId ? currentSessionId.slice(0, 8) + '… (resumed)' : 'fresh on first prompt'}`);
+  console.log(`✓ Default project: ${PROJECT_PATH}`);
   if (CLAUDE_PATH) console.log(`✓ Claude binary: ${CLAUDE_PATH}`);
-  console.log('\nEndpoints:');
-  console.log('  GET  /events  → SSE notification stream');
-  console.log('  POST /send    → submit a prompt');
-  console.log('  POST /reset   → clear the session');
-  console.log('  GET  /health  → status\n');
+  console.log(`\n🔑 Auth token (paste it in the extension side panel):\n   ${TOKEN}`);
+  console.log('\nEndpoints (all require the token):');
+  console.log('  WS   /ws        → event stream + element capture channel');
+  console.log('  POST /send      → submit a prompt (queued per project)');
+  console.log('  GET  /diff      → diff of a task\'s modified files');
+  console.log('  POST /undo      → stash a task\'s changes');
+  console.log('  POST /reset     → clear session(s)');
+  console.log('  GET  /selected  → last selected element(s) (used by MCP)');
+  console.log('  GET  /browsers  → connected Chrome profiles (companion)');
+  console.log('  GET  /browsers/find?q=      → find browser by tab url/title');
+  console.log('  POST /browsers/:id/focus    → bring a browser to the foreground');
+  console.log('  GET  /health    → status');
+  console.log(`\n✓ Companion aliases: ${ALIAS_FILE}\n`);
 });
 
-server.on('error', err => {
+server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') console.error(`\n✗ Port ${PORT} in use. Try: PORT=3132 node server.js`);
   else console.error('Error:', err);
   process.exit(1);
 });
 
 process.on('SIGINT', () => { console.log('\nBridge stopped.'); process.exit(0); });
+
+module.exports = { server };

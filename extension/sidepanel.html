@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Inspector</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #141210;
+    --bg2: #1d1b18;
+    --bg3: #252220;
+    --border: #2e2b27;
+    --accent: #CC785C;
+    --accent2: #e8956d;
+    --text: #f0ece4;
+    --text2: #9a9590;
+    --text3: #6b6760;
+    --green: #7daa6e;
+    --red: #f87171;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  .header .logo { font-family: var(--mono); font-weight: 600; font-size: 13px; color: var(--accent); }
+  .header .spacer { flex: 1; }
+
+  .bridge-status { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--text2); }
+  .bridge-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); }
+  .bridge-dot.connected { background: var(--green); }
+  .bridge-dot.error { background: var(--red); }
+
+  .icon-btn {
+    background: none; border: none; color: var(--text2); cursor: pointer;
+    font-size: 14px; padding: 4px; border-radius: 4px;
+  }
+  .icon-btn:hover { color: var(--text); background: var(--bg3); }
+
+  .main { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+
+  .panel {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  }
+  .panel-label { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); margin-bottom: 8px; }
+
+  /* Config */
+  #configPanel { display: none; }
+  #configPanel.open { display: block; }
+  .field { margin-bottom: 8px; }
+  .field label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 3px; }
+  .field input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 7px 9px; outline: none;
+  }
+  .field input:focus { border-color: var(--accent); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--bg3); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 12px; font-size: 12px; font-weight: 500;
+    cursor: pointer; font-family: var(--sans);
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent2); }
+  .btn.primary:disabled { opacity: 0.45; cursor: default; }
+  .btn.danger:hover { border-color: var(--red); color: var(--red); }
+  .btn.small { padding: 5px 9px; font-size: 11px; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row .grow { flex: 1; }
+
+  /* Selected elements */
+  .element-card {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; margin-bottom: 6px;
+  }
+  .element-card img { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
+  .element-card .info { flex: 1; min-width: 0; }
+  .element-card .tag { font-family: var(--mono); font-size: 12px; color: var(--accent2); }
+  .element-card .selector, .element-card .source {
+    font-family: var(--mono); font-size: 10px; color: var(--text2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .element-card .source { color: var(--green); }
+  .element-card .remove { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 14px; }
+  .element-card .remove:hover { color: var(--red); }
+
+  /* Mode toggle */
+  .toggle-group { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .toggle-group button {
+    flex: 1; background: none; border: none; color: var(--text2); padding: 6px 0;
+    font-size: 11px; font-weight: 500; cursor: pointer; font-family: var(--sans);
+  }
+  .toggle-group button.active { background: var(--accent); color: #fff; }
+
+  .check-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--text2); }
+  .check-row input { accent-color: var(--accent); }
+
+  /* Quick prompts */
+  .quick-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .quick-btn {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--text2);
+    border-radius: 12px; padding: 4px 10px; font-size: 11px; cursor: pointer;
+  }
+  .quick-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* Color picker */
+  #colorPanel { display: none; margin-top: 8px; }
+  #colorPanel.open { display: block; }
+  #svArea { position: relative; width: 100%; height: 110px; border-radius: 6px; cursor: crosshair; }
+  #svThumb, #hueThumb, #alphaThumb {
+    position: absolute; width: 12px; height: 12px; border: 2px solid #fff; border-radius: 50%;
+    transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 3px rgba(0,0,0,0.6);
+  }
+  .slider-track { position: relative; height: 12px; border-radius: 6px; margin-top: 10px; cursor: pointer; }
+  #hueTrack { background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+  #hueThumb, #alphaThumb { top: 50%; }
+  #alphaTrack {
+    background-image: var(--alpha-gradient), repeating-conic-gradient(#666 0 25%, #999 0 50%);
+    background-size: 100% 100%, 8px 8px;
+  }
+  .color-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  #colorPreview {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0;
+    background-image: linear-gradient(var(--current-color, #CC785C), var(--current-color, #CC785C)), repeating-conic-gradient(#666 0 25%, #999 0 50%);
+    background-size: 100% 100%, 8px 8px;
+  }
+  #hexInput {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 6px 8px; outline: none;
+  }
+  #colorPalette { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 10px; }
+  .palette-swatch { aspect-ratio: 1; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; }
+  .palette-swatch:hover { transform: scale(1.15); }
+
+  /* Prompt */
+  #promptInput {
+    width: 100%; min-height: 72px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-family: var(--sans); font-size: 13px;
+    padding: 9px 11px; resize: vertical; outline: none;
+  }
+  #promptInput:focus { border-color: var(--accent); }
+
+  /* Status */
+  .status { display: none; font-size: 12px; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; }
+  .status.success { display: block; background: rgba(125, 170, 110, 0.12); color: var(--green); }
+  .status.error { display: block; background: rgba(248, 113, 113, 0.12); color: var(--red); }
+
+  /* Task actions */
+  #taskActions { display: none; }
+  #taskActions.visible { display: block; }
+  #diffView {
+    display: none; margin-top: 8px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px; max-height: 220px; overflow: auto;
+    font-family: var(--mono); font-size: 10px; white-space: pre; color: var(--text2);
+  }
+  #diffView.open { display: block; }
+  #diffView .add { color: var(--green); }
+  #diffView .del { color: var(--red); }
+
+  /* Log */
+  #logPanel { max-height: 180px; overflow-y: auto; font-family: var(--mono); font-size: 10.5px; }
+  .log-line { padding: 2px 0; color: var(--text2); border-bottom: 1px dotted var(--bg3); }
+  .log-line .t { color: var(--text3); margin-right: 6px; }
+  .log-line.ok { color: var(--green); }
+  .log-line.err { color: var(--red); }
+
+  /* History */
+  .history-item {
+    font-size: 11px; color: var(--text2); padding: 5px 7px; border-radius: 4px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .history-item:hover { background: var(--bg3); color: var(--text); }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="logo">⌘ claude inspector</span>
+  <span class="spacer"></span>
+  <span class="bridge-status"><span id="bridgeDot" class="bridge-dot"></span><span id="bridgeStatusText">connecting…</span></span>
+  <button id="configToggle" class="icon-btn" title="Settings">⚙</button>
+</div>
+
+<div class="main">
+
+  <div id="configPanel" class="panel">
+    <div class="panel-label">Configuration</div>
+    <div class="field">
+      <label for="projectPath">Project path</label>
+      <input id="projectPath" type="text" placeholder="/Users/you/Projects/my-app" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="bridgeUrl">Bridge URL</label>
+      <input id="bridgeUrl" type="text" placeholder="http://localhost:3131" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="tokenInput">Auth token (printed by the bridge at startup)</label>
+      <input id="tokenInput" type="password" placeholder="paste the bridge token" spellcheck="false">
+    </div>
+    <div class="btn-row">
+      <button id="saveConfig" class="btn primary grow">Save</button>
+      <button id="resetSessionBtn" class="btn danger">Reset session</button>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button id="inspectBtn" class="btn grow">⊙ Select element</button>
+    <button id="inspectMultiBtn" class="btn grow">⊙⊙ Multi-select</button>
+  </div>
+
+  <div id="elementsPanel" class="panel hidden">
+    <div class="panel-label">Selected elements <button id="clearElements" class="icon-btn" title="Clear" style="float:right; margin-top:-4px;">×</button></div>
+    <div id="elementsList"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Mode</div>
+    <div class="toggle-group">
+      <button id="modeEdit" class="active">✏️ Edit</button>
+      <button id="modeExplain">🔍 Explain (read-only)</button>
+    </div>
+    <div class="check-row" id="verifyRow">
+      <input type="checkbox" id="verifyCheck">
+      <label for="verifyCheck">Verify after edit (reload page + self-check)</label>
+    </div>
+    <div class="check-row">
+      <input type="checkbox" id="screenshotCheck" checked>
+      <label for="screenshotCheck">Attach element screenshot</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Prompt</div>
+    <div class="quick-row" style="margin-bottom:8px;">
+      <button class="quick-btn" data-prompt="Change the text to">Text</button>
+      <button class="quick-btn" data-prompt="Fix the layout of">Layout</button>
+      <button class="quick-btn" data-prompt="Make it responsive:">Responsive</button>
+      <button class="quick-btn" data-prompt="Add a hover effect to">Hover</button>
+      <button class="quick-btn" data-prompt="Explain what this element does and where it is rendered from">Explain</button>
+      <button id="colorBtn" class="quick-btn">🎨 Color</button>
+    </div>
+
+    <div id="colorPanel">
+      <div id="svArea"><div id="svThumb"></div></div>
+      <div id="hueTrack" class="slider-track"><div id="hueThumb"></div></div>
+      <div id="alphaTrack" class="slider-track"><div id="alphaThumb"></div></div>
+      <div class="color-row">
+        <div id="colorPreview"></div>
+        <input id="hexInput" type="text" spellcheck="false">
+        <button id="pickFromPageBtn" class="btn small" title="Pick from page">💧</button>
+        <button id="applyColorBtn" class="btn small primary">Apply</button>
+      </div>
+      <div id="colorPalette"></div>
+    </div>
+
+    <textarea id="promptInput" placeholder="What should Claude do with the selection?"></textarea>
+
+    <div class="btn-row" style="margin-top:8px;">
+      <button id="sendBtn" class="btn primary grow" disabled><span id="sendBtnText">SEND TO CLAUDE</span></button>
+      <button id="copyBtn" class="btn" title="Copy prompt to clipboard">⧉</button>
+    </div>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <div id="taskActions" class="panel">
+    <div class="panel-label">Last task</div>
+    <div class="btn-row">
+      <button id="diffBtn" class="btn small grow">View diff</button>
+      <button id="undoBtn" class="btn small danger grow">↩ Undo task</button>
+    </div>
+    <div id="diffView"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Activity</div>
+    <div id="logPanel"></div>
+  </div>
+
+  <div id="historyPanel" class="panel hidden">
+    <div class="panel-label">History</div>
+    <div id="historyList"></div>
+  </div>
+
+</div>
+
+<script src="lib/prompt-builder.js"></script>
+<script src="sidepanel.js"></script>
+</body>
+</html>

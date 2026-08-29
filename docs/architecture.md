@@ -3,72 +3,74 @@
 ```
    ┌────────────────────────┐
    │   Webpage (any URL)    │
-   │  ┌──────────────────┐  │
-   │  │  content.js      │  │  Inspector overlay, picker,
-   │  │  content.css     │  │  result banner, EyeDropper
+   │  ┌──────────────────┐  │  Inspector overlay, single/multi picker,
+   │  │  content.js      │  │  DOM→source detection (React/Vue),
+   │  │  content.css     │  │  result banner, element re-capture
    │  └────────┬─────────┘  │
    └───────────┼────────────┘
-               │ chrome.runtime messages
+               │ chrome.runtime messages (injected on demand)
                ▼
-   ┌────────────────────────┐         POST /send       ┌────────────────────┐
-   │   Extension popup      │ ───────────────────────> │   Bridge server    │
-   │   (popup.html / .js)   │                          │   (Node.js, SSE)   │
-   │   - DevTools color     │ <─────────────────────── │                    │
-   │     picker             │       SSE: progress      │   server.js        │
-   │   - prompt + element   │                          └─────────┬──────────┘
-   │     context            │                                    │
-   └────────────┬───────────┘                                    │ Agent SDK
-                │                                                ▼
-                │                                       ┌────────────────────┐
-                ▼                                       │   Claude Code      │
-   ┌────────────────────────┐                           │   (CLI / SDK)      │
-   │   background.js        │                           │   - Read / Write   │
-   │   - SSE client         │ <───── SSE stream ──────  │   - Edit / Bash    │
-   │   - notifications      │                           └─────────┬──────────┘
-   │   - dev-watch reload   │                                     │
-   └────────────────────────┘                                     │ writes
-                                                                  ▼
-                                                         ┌────────────────────┐
-                                                         │   Your project     │
-                                                         │   files            │
-                                                         └────────────────────┘
+   ┌────────────────────────┐        POST /send (token)   ┌────────────────────┐
+   │   Side panel           │ ──────────────────────────> │   Bridge server    │
+   │   (sidepanel.html/.js) │                             │   (Node.js)        │
+   │   - element cards +    │                             │   server.js        │
+   │     screenshots        │                             │   lib/sessions.js  │
+   │   - edit/explain mode  │                             │   lib/auth.js      │
+   │   - activity log,      │                             │   lib/git-tools.js │
+   │     history, diff/undo │                             └───┬────────────┬───┘
+   └────────────┬───────────┘                                 │            │
+                │                                             │ Agent SDK  │ stdio
+                ▼                                             ▼            ▼
+   ┌────────────────────────┐    WS /ws?token=…     ┌────────────────┐  ┌─────────────────┐
+   │   background.js        │ <───────────────────> │  Claude Code   │  │  mcp-server.js  │
+   │   - WebSocket client   │  events: task_*,      │  (warm session │  │  get_selected_  │
+   │     (keeps SW alive)   │  verify_*, capture_*  │  per project)  │  │  element → your │
+   │   - screenshot crop    │                       └────────┬───────┘  │  terminal       │
+   │   - notifications      │                                │ writes   └─────────────────┘
+   └────────────────────────┘                                ▼
+                                                    ┌────────────────────┐
+                                                    │  Your project files│
+                                                    └────────────────────┘
 ```
 
 ## Components
 
 ### Chrome extension
 
-- **`content.js`** is injected into every page (`<all_urls>`). When activated, it adds a hover overlay, captures a click, and serializes element info (tag, classes, computed styles, dimensions, outer HTML, page URL) into a structured payload that is sent to the popup via `chrome.runtime.sendMessage`. It also listens for `taskResult` messages from the background and shows a persistent in-page banner with a cache-bypassing reload button.
-- **`popup.html` / `popup.js`** present the picked element, a prompt textarea, and a DevTools-style color picker (saturation/value square, hue + alpha sliders, hex input, palette, EyeDropper). Hitting *Send* either POSTs to the bridge or copies the message to the clipboard.
-- **`background.js`** is the long-lived service worker. It maintains an SSE connection to `http://localhost:3131/events`, surfaces task lifecycle events as Chrome notifications, and forwards `task_done` events to the active tab so the in-page banner can render. A `chrome.alarms` keepalive prevents the worker from going idle. It also connects to the optional dev-watch SSE feed to reload the extension on file changes.
+- **`content.js`** is injected **on demand only** (a window guard makes re-injection a no-op, so listeners are never duplicated). It provides the hover overlay, single and multi-select picking, and serializes element info: tag, classes, CSS selector, XPath, computed styles, viewport rect, outer HTML, page URL, and — on React/Vue dev builds — the **source file/line** of the component that rendered the element (`_debugSource` fiber walk, `__vueParentComponent.type.__file`, Vue 2 `$options.__file`). It also re-captures an element by selector for the verification loop and renders the persistent task banner.
+- **`sidepanel.html` / `sidepanel.js`** replace the old popup. The panel stays open while you interact with the page and hosts: config (project path, bridge URL, auth token), element cards with cropped screenshots and source chips, Edit/Explain mode toggle, verify checkbox, quick prompts + DevTools-style color picker, a streaming activity log, prompt history with re-send, diff preview and undo.
+- **`extension/lib/prompt-builder.js`** builds the message sent to Claude (UMD-style so the bridge test suite can `require` it).
+- **`background.js`** is the service worker. It keeps a **WebSocket** open to the bridge — on Chrome 116+ an active WS keeps the MV3 worker alive, so no `chrome.alarms` hack is needed. It routes bridge events to the side panel, shows notifications, sends the completion banner to **the tab the prompt came from** (tracked per task), crops element screenshots (`captureVisibleTab` + `OffscreenCanvas`), and services the bridge's `capture_request` during verification (reload tab → wait → re-inject → re-capture → reply over WS).
 
-### Bridge server (`bridge/server.js`)
+### Bridge server (`bridge/`)
 
-- Pure Node.js (no Express, no other deps) — the only runtime dependency is `@anthropic-ai/claude-agent-sdk`.
-- Exposes:
-  - `POST /send` — accepts `{ prompt, projectPath }`, returns immediately with a `taskId`, then runs `query()` from the Agent SDK and broadcasts SSE events as messages stream in.
-  - `GET /events` — SSE stream of `task_start`, `task_progress`, `task_done`, `session_reset` events.
-  - `POST /reset` — clears the persisted session id.
-  - `GET /session`, `GET /health` — introspection.
-- **Sessions**: the SDK returns a `session_id` on the first turn. The bridge writes it to `.session_id` and passes it as `resume` on subsequent prompts, so Claude keeps context across requests. If the SDK reports an invalid session, the bridge retries once without `resume`.
-- **Path normalization**: the extension occasionally sends shell-escaped paths like `/Users/me/my\ project`. The bridge converts the `\ ` sequences to literal spaces before passing the path to the SDK as `cwd`.
+Runtime deps: `@anthropic-ai/claude-agent-sdk` (pinned) and `ws`.
+
+- **`lib/auth.js`** — a shared secret is generated on first start (`.inspector_token`, mode 600) and printed at startup. Every endpoint and the WS handshake require it. Requests carrying an `http(s)` `Origin` are rejected regardless of token, so web pages can never reach the bridge; CORS is only reflected for `chrome-extension://` origins. The server binds to `127.0.0.1`.
+- **`lib/sessions.js`** — the core. One **warm Agent SDK process per (project, mode)** using streaming input: prompts are pushed into a long-lived `query()`, eliminating the cold spawn per task and preserving conversation context. Tasks on the same project are **queued** (promise chain), never run concurrently on one session. Session ids are persisted in `.sessions.json` keyed by `projectPath::mode`, so a bridge restart resumes the right session for the right project. Idle processes are disposed after 15 min. `explain` mode restricts tools to `Read`/`Glob`/`Grep`.
+- **`lib/git-tools.js`** — diff and undo via `execFile` (no shell interpolation). Undo uses `git stash push --include-untracked -- <files>`: recoverable, and it also removes files the task created.
+- **`server.js`** — HTTP endpoints (`/send`, `/diff`, `/undo`, `/reset`, `/session`, `/selected`, `/health`) + the `/ws` WebSocket. Tracks the files each task modified (from `tool_use` blocks) for diff/undo, forwards the originating `tabId` with every event, and orchestrates the **verification loop**: on `task_done` with `verify: true` it asks the extension to reload + re-capture the element (screenshot included) and pushes a self-check turn into the same warm session; if Claude finds the change wrong, it fixes it (`verify_done` reports whether a fix was applied). One round, no recursion.
+- **`lib/companion.js`** — the Chrome Companion store: each extension instance announces its profile (id, email, windows, tabs) over the WS; the store tracks connected profiles, prunes stale ones (~2 min), resolves aliases from `~/.chrome-companion/aliases.json` (hot-reloaded), and manages focus round-trips. Snapshots arrive only on change (the extension sends a light ping otherwise) and URLs of sensitive domains are redacted client-side. Exposed via `GET /browsers`, `GET /browsers/find?q=`, `POST /browsers/:id/focus`.
+- **`mcp-server.js`** — dependency-free MCP stdio server exposing `get_selected_element` plus the companion tools `list_my_browsers`, `find_browser`, `focus_browser`; it reads the token file and calls the bridge over HTTP. Being a separate process from the bridge, one bridge can serve many concurrent MCP client sessions. Register with `claude mcp add inspector -- node …/bridge/mcp-server.js`.
+- **`cli.js`** — `npx claude-code-inspector [--port N] [--project DIR] [--mcp]`.
 
 ### Claude Code
 
-The bridge invokes Claude Code via the Agent SDK with `permissionMode: 'acceptEdits'`, `allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']`, and `allowDangerouslySkipPermissions: true`. Because the bridge only listens on `127.0.0.1`, this is safe for a local developer setup.
+The bridge invokes Claude Code via the Agent SDK with `permissionMode: 'acceptEdits'` and `allowDangerouslySkipPermissions: true` in Edit mode (`allowedTools: Read/Write/Edit/Bash/Glob/Grep`), read-only tools in Explain mode. Combined with token + Origin auth and the localhost-only bind, this is scoped to a local developer setup.
 
 ## Data flow for one prompt
 
-1. User selects an element with the inspector → content script sends `elementSelected` to the popup.
-2. User types a prompt and hits Send → popup constructs the full prompt (prompt text + selected element block) and POSTs it to `/send`.
-3. Bridge receives the request, returns `{ taskId, sessionId }` immediately, broadcasts `task_start` over SSE.
-4. Bridge runs `query()`. As Claude calls tools (Read, Write, Edit, Bash…), the bridge broadcasts `task_progress` for each `tool_use` block.
-5. When the SDK emits a `result` message, the bridge broadcasts `task_done` with `success`, `durationSec`, `turns`, and a count of files modified.
-6. The background service worker forwards `task_done` to the active tab, which renders a persistent banner with the result and a *Reload without cache* button.
-7. If the user clicks reload → content script sends `reloadTabNoCache` to the background, which calls `chrome.tabs.reload(tabId, { bypassCache: true })`.
+1. User clicks **Select element** in the side panel → background injects `content.js` into the active tab → user picks element(s).
+2. Content script sends `elementsSelected` → background stores the selection (with the tab id), pushes it to the bridge over WS (for the MCP tool), captures cropped screenshots, and notifies the panel.
+3. User types a prompt and hits Send → panel builds the message (prompt + element blocks + source info) and POSTs `/send` with `{ prompt, projectPath, mode, tabId, verify, elements, images }` and the auth token.
+4. Bridge answers immediately with a `taskId` and queues the task on the project's warm session; `task_start` / `task_progress` / `task_done` stream over WS as Claude works.
+5. Background shows notifications and forwards events to the panel's activity log; on `task_done` the banner goes to the originating tab.
+6. If verify was enabled and files changed: bridge sends `capture_request` → background reloads the tab, re-captures element + screenshot → bridge pushes a verification turn into the same session → `verify_done` (with `fixed: true` if Claude corrected itself).
+7. From the panel the user can **View diff** (`GET /diff?taskId=`) or **Undo task** (`POST /undo`, git stash).
 
 ## Security notes
 
-- The bridge listens **only on `127.0.0.1`** — never on `0.0.0.0`. It is a developer-only tool.
-- The extension's `host_permissions` allow it to talk to localhost only.
-- There is no remote network call from the extension or the bridge except those originating from Claude Code itself when it calls the Anthropic API.
+- The bridge listens **only on `127.0.0.1`** — never on `0.0.0.0`.
+- All endpoints and the WS require the startup token; `http(s)` origins are rejected outright (a malicious page cannot `fetch('http://localhost:3131/send')` anymore).
+- The extension's default `host_permissions` cover localhost only; `<all_urls>` is an *optional* permission the user can grant for non-localhost verification flows.
+- No remote network calls from extension or bridge except those originating from Claude Code itself when it calls the Anthropic API.

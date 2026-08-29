@@ -9,6 +9,8 @@ pnpm-lock.yaml
 
 # Bridge runtime state
 bridge/.session_id
+bridge/.sessions.json
+bridge/.inspector_token
 bridge/.env
 
 # OS / editor

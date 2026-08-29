@@ -5,3 +5,9 @@
   font-family: 'SF Mono', 'Fira Code', monospace !important;
   box-sizing: border-box !important;
 }
+
+/* Elements picked in multi-select mode keep a visible mark until the round ends */
+.__claude_selected_mark__ {
+  outline: 2px dashed #CC785C !important;
+  outline-offset: 1px !important;
+}
