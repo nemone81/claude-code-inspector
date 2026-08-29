@@ -21,7 +21,13 @@ async function loadConfig() {
 
 loadConfig().then(connectWS);
 chrome.runtime.onStartup.addListener(() => loadConfig().then(connectWS));
-chrome.runtime.onInstalled.addListener(() => loadConfig().then(connectWS));
+chrome.runtime.onInstalled.addListener((details) => {
+  loadConfig().then(connectWS);
+  // First install: open the setup guide.
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('help.html') });
+  }
+});
 
 // ─── WebSocket to the bridge ──────────────────────────────────────────────────
 function wsUrl() {

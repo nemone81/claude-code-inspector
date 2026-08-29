@@ -45,6 +45,9 @@ function authHeaders() {
 
 // ─── Events ───────────────────────────────────────────────────────────────────
 function bindEvents() {
+  $('helpBtn').addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('help.html') });
+  });
   $('configToggle').addEventListener('click', () => $('configPanel').classList.toggle('open'));
   $('saveConfig').addEventListener('click', saveConfig);
   $('resetSessionBtn').addEventListener('click', resetSession);

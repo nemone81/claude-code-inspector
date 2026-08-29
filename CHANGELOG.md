@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- In-extension setup guide (`extension/help.html`): opens automatically on first install and via the **?** button in the side panel — bridge startup + token, panel configuration, usage, MCP registration, troubleshooting.
+
 ## [4.0.0] - 2026-08-29
 
 ### Security

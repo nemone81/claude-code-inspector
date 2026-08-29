@@ -9,6 +9,7 @@ Chrome extension (Manifest V3, Chrome ≥ 116) that lets you pick DOM elements o
 - `content.js` — visual DOM picker (single + multi-select), DOM→source detection for React/Vue dev builds, element re-capture, task-result banner. Injected **on demand only**, guarded against double injection
 - `content.css` — picker overlay/tooltip styles
 - `sidepanel.html` / `sidepanel.js` — side panel UI: config (project, bridge URL, token), element cards with screenshots and source chips, edit/explain modes, verify toggle, color picker, activity log, prompt history, diff preview, undo
+- `help.html` — in-extension setup guide; opens automatically on first install, and anytime via the **?** button in the side panel
 - `lib/prompt-builder.js` — builds the message sent to Claude (shared with the bridge test suite)
 - `dev-watch.js` — local SSE server that triggers `chrome.runtime.reload()` on file changes
 - `icons/` — toolbar / store icons

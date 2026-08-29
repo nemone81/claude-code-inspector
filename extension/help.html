@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Inspector — Setup guide</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #141210;
+    --bg2: #1d1b18;
+    --bg3: #252220;
+    --border: #2e2b27;
+    --accent: #CC785C;
+    --accent2: #e8956d;
+    --text: #f0ece4;
+    --text2: #9a9590;
+    --text3: #6b6760;
+    --green: #7daa6e;
+    --red: #f87171;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  header { margin-bottom: 40px; }
+  header .logo { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--accent); }
+  header .sub { color: var(--text2); margin-top: 6px; }
+
+  h2 {
+    font-size: 18px; margin: 44px 0 14px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h2 .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+    margin-right: 10px; vertical-align: -4px;
+  }
+  h3 { font-size: 15px; margin: 22px 0 8px; color: var(--accent2); }
+
+  p { margin: 10px 0; }
+  p, li { color: var(--text); }
+  .muted { color: var(--text2); font-size: 13.5px; }
+
+  code {
+    font-family: var(--mono); font-size: 13px;
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1.5px 6px;
+  }
+
+  pre {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin: 12px 0; overflow-x: auto;
+    font-family: var(--mono); font-size: 13px; line-height: 1.6;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  pre .c { color: var(--text3); }
+  pre .hl { color: var(--accent2); }
+
+  ul, ol { margin: 10px 0 10px 24px; }
+  li { margin: 6px 0; }
+
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--bg2);
+    border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 14px 0;
+    font-size: 14px;
+  }
+  .callout.green { border-left-color: var(--green); }
+  .callout.red { border-left-color: var(--red); }
+  .callout b { color: var(--text); }
+
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text3); font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; }
+  td:first-child { white-space: nowrap; font-family: var(--mono); font-size: 13px; color: var(--accent2); }
+
+  kbd {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg3); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px;
+  }
+
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: 0; }
+  .dot.green { background: var(--green); }
+  .dot.red { background: var(--red); }
+
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--text3); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">⌘ claude code inspector</div>
+  <div class="sub">Pick elements on any page, describe the change, and let Claude Code edit your project files. Here's how to get everything running.</div>
+</header>
+
+<h2><span class="n">1</span>Start the bridge</h2>
+<p>The extension talks to a small local server (the <b>bridge</b>) that runs Claude Code against your project. Start it in a terminal and leave it running:</p>
+<pre><code><span class="c"># from the claude-code-inspector repo</span>
+cd bridge
+npm install        <span class="c"># first time only</span>
+node server.js</code></pre>
+<p>On startup the bridge prints an <b>auth token</b>:</p>
+<pre><code>✓ Bridge listening on http://localhost:3131
+
+<span class="hl">🔑 Auth token (paste it in the extension side panel):
+   xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</span></code></pre>
+<p class="muted">Every request needs this token — it's what stops random web pages from reaching the bridge. It's stored in <code>bridge/.inspector_token</code>; delete that file and restart the bridge to rotate it.</p>
+
+<h2><span class="n">2</span>Configure the side panel</h2>
+<ol>
+  <li>Click the extension icon in the toolbar — the <b>side panel</b> opens.</li>
+  <li>Open settings (<b>⚙</b>) and fill in:
+    <ul>
+      <li><b>Project path</b> — absolute path of the repo Claude should edit, e.g. <code>/Users/you/Projects/my-app</code></li>
+      <li><b>Bridge URL</b> — leave <code>http://localhost:3131</code> unless you changed the port</li>
+      <li><b>Auth token</b> — paste the token from step 1</li>
+    </ul>
+  </li>
+  <li>Hit <b>Save</b>.</li>
+</ol>
+<div class="callout green"><span class="dot green"></span>&nbsp; The dot in the panel header turns <b>green</b> when the WebSocket to the bridge is connected. <span class="dot red"></span>&nbsp; Red with <i>“bridge up · set token”</i> means the bridge is running but the token is missing or wrong.</div>
+
+<h2><span class="n">3</span>Use it</h2>
+<ol>
+  <li>Open the page you're working on — ideally your local dev server.</li>
+  <li>Click <b>⊙ Select element</b> (or <b>⊙⊙ Multi-select</b>) and click element(s) on the page. In multi-select, finish with <kbd>Enter</kbd> (<kbd>Esc</kbd> also confirms what you picked).</li>
+  <li>Each selected element appears as a card with its selector, a cropped screenshot and — on React/Vue dev builds — the <b>source file and line</b> that rendered it.</li>
+  <li>Pick a mode:
+    <ul>
+      <li><b>✏️ Edit</b> — Claude can read and modify the project files.</li>
+      <li><b>🔍 Explain</b> — read-only: Claude can only <code>Read</code>/<code>Grep</code>/<code>Glob</code>, useful to understand unfamiliar code.</li>
+    </ul>
+  </li>
+  <li>Optionally enable <b>Verify after edit</b>: when the task finishes, the bridge reloads the tab, re-captures the element and asks Claude to double-check (and fix) its own change.</li>
+  <li>Type a prompt and hit <b>Send</b> (<kbd>⌘</kbd>+<kbd>Enter</kbd> works too). Progress streams into the <b>Activity</b> log; a banner appears on the page when the task completes.</li>
+</ol>
+<h3>After a task</h3>
+<ul>
+  <li><b>View diff</b> — the git diff of the files the task touched.</li>
+  <li><b>↩ Undo task</b> — stashes those changes (<code>git stash</code>: recoverable with <code>git stash pop</code>).</li>
+  <li><b>History</b> — click any previous prompt to reuse it.</li>
+</ul>
+
+<h2><span class="n">4</span>Optional: Claude Code in your terminal (MCP)</h2>
+<p>Register the bridge's MCP server once, and terminal Claude Code sessions can see what you selected in the browser:</p>
+<pre><code>claude mcp add inspector -- node /abs/path/to/claude-code-inspector/bridge/mcp-server.js</code></pre>
+<p>Then just say <i>“look at the element I selected in the browser”</i>. The MCP server also exposes the <b>companion</b> tools: <code>list_my_browsers</code>, <code>find_browser</code> and <code>focus_browser</code> tell your Chrome profiles apart (each profile running this extension announces its windows and tabs to the bridge) and bring the right one to the foreground.</p>
+<p class="muted">Privacy: the tab list only ever goes to your local bridge, only when something changes, and URLs of sensitive sites (password managers, payment providers, Google accounts) are redacted. The list is configurable via the <code>sensitiveDomains</code> key in the extension's storage.</p>
+
+<h2><span class="n">5</span>Troubleshooting</h2>
+<table>
+  <tr><th>Symptom</th><th>Fix</th></tr>
+  <tr><td>bridge offline</td><td>The bridge isn't running or the URL/port in ⚙ settings is wrong. Start it with <code>node server.js</code> in <code>bridge/</code>.</td></tr>
+  <tr><td>bridge up · set token / bad token</td><td>Paste the token printed at bridge startup into ⚙ settings. To rotate it, delete <code>bridge/.inspector_token</code> and restart the bridge.</td></tr>
+  <tr><td>Cannot inspect this page</td><td>Chrome blocks extensions on <code>chrome://</code> pages and the Web Store. Use a normal page.</td></tr>
+  <tr><td>Project directory not found</td><td>The project path must be absolute and literal (no <code>\&nbsp;</code> escapes) and the folder must exist.</td></tr>
+  <tr><td>No screenshots / verify fails on non-localhost pages</td><td>Default site access covers <code>localhost</code> only. Grant broader access from <code>chrome://extensions</code> → Claude Code Inspector → <i>Site access</i>.</td></tr>
+  <tr><td>Claude answers with stale context</td><td>Sessions persist per project. Use <b>Reset session</b> in ⚙ settings to start fresh.</td></tr>
+</table>
+<div class="callout"><b>Heads-up:</b> in Edit mode Claude runs with auto-accepted edits inside the project you configured. Point it only at projects you're happy to let it modify — that's what Explain mode and <b>Undo task</b> are for.</div>
+
+<footer>
+  Claude Code Inspector · <a href="https://github.com/nemone81/claude-code-inspector" target="_blank" rel="noreferrer">GitHub repo</a> · full docs in <code>docs/installation.md</code> and <code>docs/architecture.md</code>. Reopen this page anytime with the <b>?</b> button in the side panel.
+</footer>
+
+</div>
+</body>
+</html>
