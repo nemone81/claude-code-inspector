@@ -554,6 +554,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('  POST /send      → submit a prompt (queued per project)');
   console.log('  GET  /diff      → diff of a task\'s modified files');
   console.log('  POST /undo      → stash a task\'s changes');
+  console.log('  POST /ship      → checks, commit, push (and deploy, if declared)');
+  console.log('  GET  /ship/config → how this project says it is published');
   console.log('  POST /reset     → clear session(s)');
   console.log('  GET  /selected  → last selected element(s) (used by MCP)');
   console.log('  GET  /browsers  → connected Chrome profiles (companion)');
