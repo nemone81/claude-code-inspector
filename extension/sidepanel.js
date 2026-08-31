@@ -8,13 +8,16 @@ let config = { projectPath: '', bridgeUrl: 'http://localhost:3131', token: '' };
 let selection = null;          // { elements, screenshots, pageUrl, tabId }
 let mode = 'edit';             // 'edit' | 'explain'
 let lastTaskId = null;
+let lastTaskShipped = false;
 let history = [];
+let currentTab = null;      // kept fresh: permissions.request() can't await a tabs.query
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await loadHistory();
   bindEvents();
+  trackActiveTab();
   initColorPicker();
   refreshSelectionFromBackground();
   checkBridgeStatus();
@@ -80,6 +83,12 @@ function bindEvents() {
 
   $('diffBtn').addEventListener('click', showDiff);
   $('undoBtn').addEventListener('click', undoTask);
+  $('shipBtn').addEventListener('click', shipTask);
+  $('shipMsgToggle').addEventListener('click', () => {
+    const box = $('shipMessage');
+    box.classList.toggle('hidden');
+    if (!box.classList.contains('hidden')) box.focus();
+  });
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'selectionChanged') {
@@ -95,8 +104,101 @@ function bindEvents() {
   });
 }
 
+// ─── Active tab ───────────────────────────────────────────────────────────────
+// The panel outlives navigation, so the active tab is cached and refreshed via
+// events: chrome.permissions.request() only counts the click as a user gesture
+// when it is called before any await, so there is no room to query it on demand.
+function trackActiveTab() {
+  const refresh = () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      currentTab = tab || null;
+      updateOriginNotice();
+    });
+  };
+  refresh();
+  chrome.tabs.onActivated.addListener(refresh);
+  chrome.tabs.onUpdated.addListener((_id, info) => {
+    if (info.url || info.status === 'complete') refresh();
+  });
+  chrome.windows.onFocusChanged.addListener(refresh);
+}
+
+// Host permission pattern for a page, or null if extensions can't run there.
+function originPattern(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return `${u.protocol}//${u.hostname}/*`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Dove sta guardando chi usa il pannello.
+ *
+ * ⚠️ Questa riga esiste per un fraintendimento che e' costato una mattinata:
+ * il bridge scrive sui **file del repo**, dice "done", e chi sta guardando il
+ * sito pubblicato non vede cambiare niente — giustamente, perche' li' arriva
+ * solo cio' che e' stato committato e pubblicato. Il pannello sapeva tutto
+ * quello che serviva per dirlo e non lo diceva.
+ */
+function isLocalHost(url) {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+      || hostname.endsWith('.localhost') || /^192\.168\./.test(hostname) || /^10\./.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function updateOriginNotice() {
+  const el = $('originNotice');
+  if (!el) return;
+  const url = currentTab?.url || '';
+  if (!/^https?:/.test(url) || isLocalHost(url)) {
+    el.classList.remove('visible');
+    return;
+  }
+  let host = url;
+  try { host = new URL(url).hostname; } catch { /* keep the raw url */ }
+  el.textContent = `Stai guardando ${host}: le modifiche escono sui file del repo, e li' compaiono solo dopo commit e deploy. Usa "Ship it", oppure apri il sito in locale.`;
+  el.classList.add('visible');
+}
+
+/** L'etichetta accanto a "Last task": dove sta, adesso, quello che e' stato fatto. */
+function setShipState(text, cls = '') {
+  const el = $('shipState');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `ship-state ${cls}`;
+}
+
 // ─── Inspector ────────────────────────────────────────────────────────────────
 function startInspector(multi) {
+  const url = currentTab?.url;
+  const origin = originPattern(url);
+  if (!origin) {
+    showStatus('Cannot inspect this page: only http(s) pages can be inspected', 'error');
+    return;
+  }
+  // Already-granted origins resolve straight away; new ones show Chrome's
+  // permission prompt instead of failing inside executeScript.
+  chrome.permissions.request({ origins: [origin] }, (granted) => {
+    if (chrome.runtime.lastError) {
+      showStatus(`Cannot inspect this page: ${chrome.runtime.lastError.message}`, 'error');
+      return;
+    }
+    if (!granted) {
+      showStatus(`Access to ${new URL(url).hostname} denied — grant it to inspect this page`, 'error');
+      return;
+    }
+    injectInspector(multi);
+  });
+}
+
+function injectInspector(multi) {
   chrome.runtime.sendMessage({ action: 'injectInspector', multi }, (res) => {
     if (!res?.ok) {
       showStatus(`Cannot inspect this page: ${res?.error || 'unknown error'}`, 'error');
@@ -331,6 +433,81 @@ async function showDiff() {
 }
 
 let undoArmed = false;
+/**
+ * Pubblica l'ultimo task: controlli, commit dei soli file toccati, push, e —
+ * se il progetto ha dichiarato come — deploy.
+ *
+ * Alla prima volta su un progetto che non ha ancora un `.claude-inspector.json`
+ * si chiede conferma mostrando **cosa si e' visto nel repo**: un
+ * `.vercel/project.json`, uno script `deploy`. Una configurazione indovinata
+ * che parte da sola e' l'automatismo che poi non si lascia acceso, quindi la
+ * si scrive solo con un si' esplicito.
+ */
+async function shipTask() {
+  if (!lastTaskId) return;
+  const btn = $('shipBtn');
+
+  // Ripubblicare lo stesso task committa un secondo commit vuoto o, peggio,
+  // porta con se' modifiche fatte nel frattempo su quei file: si chiede.
+  if (lastTaskShipped && !window.confirm('Questo task e\' gia\' stato pubblicato. Rifarlo?')) return;
+
+  try {
+    const cfgRes = await fetch(
+      `${config.bridgeUrl}/ship/config?projectPath=${encodeURIComponent(config.projectPath || '')}`,
+      { headers: authHeaders() },
+    );
+    const cfg = await cfgRes.json().catch(() => ({}));
+    if (!cfgRes.ok) throw new Error(cfg.error || `Bridge error: ${cfgRes.status}`);
+
+    if (!cfg.config) {
+      const s = cfg.detected?.suggestion || {};
+      const seen = (cfg.detected?.seen || []).join(', ') || 'niente di riconoscibile';
+      const lines = [
+        `Questo progetto non dice ancora come si pubblica.`,
+        ``,
+        `Visto nel repo: ${seen}`,
+        ``,
+        `Proposta da scrivere in ${cfg.file}:`,
+        `  controlli: ${(s.checks || []).join(', ') || 'nessuno'}`,
+        `  push: ${s.ship?.push === false ? 'no' : 'si'}`,
+        `  deploy: ${s.deploy?.run || (s.deploy?.status ? 'parte dal push, stato: ' + s.deploy.status : 'parte dal push')}`,
+        ``,
+        `Scrivo il file e proseguo?`,
+      ];
+      if (!window.confirm(lines.join('\n'))) return;
+
+      const write = await fetch(`${config.bridgeUrl}/ship/config`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ projectPath: config.projectPath, config: s }),
+      });
+      const written = await write.json().catch(() => ({}));
+      if (!write.ok) throw new Error(written.error || 'non sono riuscito a scrivere la configurazione');
+      addLog(`⚙ ${cfg.file} scritto: da ora la pubblicazione e' dichiarata, non indovinata`, 'ok');
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'SHIPPING…';
+    setShipState('in corso…');
+    addLog('⇧ ship: controlli, commit, push…');
+
+    const res = await fetch(`${config.bridgeUrl}/ship`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ taskId: lastTaskId, message: $('shipMessage').value.trim() || null }),
+    });
+    const data = await res.json().catch(() => ({}));
+    // Da qui in poi racconta il WebSocket: i controlli di un progetto vero
+    // durano minuti, e la risposta HTTP arriva subito apposta.
+    if (!res.ok) throw new Error(data.error || `Bridge error: ${res.status}`);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '⇧ Ship it';
+    setShipState('non pubblicato', 'local');
+    showStatus('Ship: ' + e.message, 'error');
+  }
+}
+
 async function undoTask() {
   if (!lastTaskId) return;
   const btn = $('undoBtn');
@@ -375,7 +552,17 @@ function handleBridgeEvent(ev) {
       if (ev.success) {
         addLog(`✓ done in ${ev.durationSec}s · ${ev.filesModified || 0} file(s)`, 'ok');
         showStatus(`✓ Completed in ${ev.durationSec}s\n${(ev.result || '').slice(0, 200)}`, 'success');
-        if (ev.taskId === lastTaskId && ev.canUndo) $('taskActions').classList.add('visible');
+        if (ev.taskId === lastTaskId && ev.canUndo) {
+          $('taskActions').classList.add('visible');
+          lastTaskShipped = false;
+          $('shipBtn').disabled = false;
+          $('shipBtn').textContent = '⇧ Ship it';
+          // Il numero di file da solo non dice la cosa che serve sapere.
+          setShipState(`${ev.filesModified || 0} file · solo in locale`, 'local');
+          if (!ev.shipConfigured) {
+            addLog('nessun .claude-inspector.json: "Ship it" propone come pubblicare questo progetto');
+          }
+        }
       } else {
         addLog(`✗ failed: ${ev.error}`, 'err');
         showStatus(`✗ Error: ${ev.error}`, 'error');
@@ -397,6 +584,35 @@ function handleBridgeEvent(ev) {
         addLog(`🔁 verify failed: ${ev.error}`, 'err');
       }
       break;
+    case 'ship_progress': {
+      if (ev.status === 'log') { addLog(`  │ ${String(ev.line).slice(0, 120)}`); break; }
+      const label = ev.command ? `${ev.step}: ${ev.command}` : ev.step;
+      if (ev.status === 'running') addLog(`⇧ ${label}…`);
+      else if (ev.status === 'ok') addLog(`⇧ ${label} ✓`, 'ok');
+      else if (ev.status === 'failed') addLog(`⇧ ${label} ✗ ${ev.error || ''}`, 'err');
+      else if (ev.status === 'skipped') addLog(`⇧ ${label} — saltato: ${ev.error || ''}`);
+      else if (ev.status === 'external') addLog('⇧ il deploy parte dal push: lo fa il tuo hosting');
+      else if (ev.status === 'waiting') addLog('⇧ deploy in corso…');
+      break;
+    }
+    case 'ship_done': {
+      $('shipBtn').disabled = false;
+      if (ev.ok) {
+        lastTaskShipped = true;
+        const where = ev.pushed ? 'pubblicato' : 'committato';
+        addLog(`⇧ ${where}${ev.sha ? ' · ' + ev.sha : ''}${ev.branch ? ' su ' + ev.branch : ''}`, 'ok');
+        setShipState(`${where}${ev.sha ? ' · ' + ev.sha : ''}`, 'shipped');
+        $('shipBtn').textContent = '⇧ Shipped';
+        $('shipMessage').value = '';
+      } else {
+        const failed = (ev.steps || []).find((s) => s.status === 'failed');
+        // Il passo che si e' rotto, non un "non ha funzionato": e' la
+        // differenza fra sapere cosa aggiustare e riprovare a caso.
+        showStatus(`⇧ Fermato su "${failed?.step || 'ship'}"\n${(failed?.error || '').slice(0, 200)}\n${(failed?.output || '').slice(-400)}`, 'error');
+        setShipState('non pubblicato', 'local');
+      }
+      break;
+    }
     case 'session_reset':
       addLog('session reset');
       break;

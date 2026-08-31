@@ -26,8 +26,53 @@ https://github.com/user-attachments/assets/dd3f5a25-765a-461b-8628-cedccc59ed74
 - **Closed verification loop** — optionally, after the edit the bridge reloads the tab, re-captures the element (screenshot included) and asks Claude to self-check and fix its own change.
 - **Warm sessions, queued per project** — one persistent Agent SDK process per project (streaming input): no cold spawn per task, context preserved, concurrent prompts queued.
 - **Diff preview & undo** — see the git diff of the files a task touched, and undo it with one click (`git stash`, recoverable).
+- **Ship it** — checks, commit and push the files a task changed, without leaving the panel. The task line says where the change is (`3 file · solo in locale`) and the panel warns you when the tab you are inspecting is **not** localhost: the bridge edits files, and a published site only shows what has been committed and deployed.
 - **MCP tools** — `get_selected_element` lets Claude Code in your terminal read what you selected in the browser; `list_my_browsers` / `find_browser` / `focus_browser` (Chrome Companion) tell your Chrome profiles apart and bring the right one to the foreground when driving Claude in Chrome.
 - **Token-authenticated** — the bridge only accepts requests carrying the secret it prints at startup; web pages are blocked by Origin checks.
+
+## Publishing what the inspector changed
+
+A task ends with edited files on your disk. If you are looking at the deployed
+site, nothing changes there — and that gap is where people lose an afternoon.
+The panel closes it in two ways: the last-task line says `3 file · solo in
+locale`, and **Ship it** publishes.
+
+Ship runs, in order: the project's **checks**, `git add` of **only the files
+that task touched** (never `git add -A`: other work in progress is not yours to
+publish), `git commit`, `git push`, and — if declared — a deploy command. Every
+step is streamed to the activity log, and a failure names the step that broke.
+
+How a project is published is **declared, not detected**, in a
+`.claude-inspector.json` committed to the repo:
+
+```json
+{
+  "checks": ["pnpm lint", "pnpm typecheck", "pnpm test"],
+  "ship":   { "push": true, "branch": "main" },
+  "deploy": { "run": "./deploy/deploy.sh", "status": "npx vercel ls --prod" }
+}
+```
+
+- `checks` — commands that must pass before anything is committed.
+- `ship.push` — set `false` to commit only. `ship.branch` refuses to push from
+  any other branch, which is almost always a misconfiguration.
+- `deploy.run` — a command, if your deploy is something you run (a VPS script,
+  a CLI). Where the deploy starts from the push, leave it out: the panel says so
+  instead of pretending to know.
+- `deploy.status` — a command that prints how it is going, shown in the panel.
+  With `waitSeconds` and `readyWhen` it is asked repeatedly until the text
+  appears.
+
+The bridge knows nothing about Vercel, Netlify or any host: these are just
+commands your project provides. The first time you press Ship on a project
+without the file, the panel looks at the repo (`.vercel/project.json`, a
+`deploy` script, a workflow), shows you **what it saw**, and offers to write the
+file — a guessed pipeline that runs by itself is the kind of automation nobody
+ends up trusting.
+
+⚠️ Those commands run on your machine with your permissions. They come only
+from that file inside the project directory, never from the extension or an
+HTTP request — the same trust boundary npm scripts already have.
 
 ## Quick start
 

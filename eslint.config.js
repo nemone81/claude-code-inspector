@@ -47,7 +47,19 @@ module.exports = [
     rules: commonRules,
   },
   {
+    // Node script che vive nella cartella dell'estensione: non gira nel
+    // browser, e senza questa riga il lint del repo non e' mai verde.
+    files: ['extension/dev-watch.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'commonjs',
+      globals: { ...sharedGlobals, require: 'readonly', module: 'writable', process: 'readonly', __dirname: 'readonly' },
+    },
+    rules: commonRules,
+  },
+  {
     files: ['extension/**/*.js'],
+    ignores: ['extension/dev-watch.js'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'script',

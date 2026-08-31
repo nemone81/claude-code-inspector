@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Inspecting a page outside `localhost` failed with *“Extension manifest must request permission to access this host”*: the side panel now asks for the page's host permission (from the optional `<all_urls>` grant) when **Inspect** is clicked, instead of letting `scripting.executeScript` fail.
+
 ### Added
+- **Ship it**: the panel can now run the project's checks, commit the files a task changed and push them, with every step streamed to the activity log. How a project is published is declared in a `.claude-inspector.json` in the repo (`checks`, `ship`, `deploy`); the bridge runs those commands and knows nothing about any hosting provider. Missing the file, the first Ship shows what it found in the repo and offers to write it.
+- The last-task line says **where the change is** (`3 file · solo in locale` → `pubblicato · a1b2c3d`), and the panel warns when the inspected tab is not localhost: the bridge edits files on disk, and a deployed site only shows what has been committed and deployed. Without this, "done" reads as "it is online".
 - In-extension setup guide (`extension/help.html`): opens automatically on first install and via the **?** button in the side panel — bridge startup + token, panel configuration, usage, MCP registration, troubleshooting.
 
 ## [4.0.0] - 2026-08-29

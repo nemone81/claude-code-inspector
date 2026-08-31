@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { loadOrCreateToken, authorize, isOriginAllowed, tokenFromRequest, timingSafeEqual } = require('./lib/auth');
 const { SessionPool, MODES } = require('./lib/sessions');
 const { diffFiles, undoFiles } = require('./lib/git-tools');
+const { detectProject, readShipConfig, writeShipConfig, ship, watchDeploy, CONFIG_FILE } = require('./lib/ship');
 const { CompanionStore, ALIAS_FILE } = require('./lib/companion');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -213,6 +214,10 @@ async function runTask(task) {
       turns: result.turns,
       filesModified: result.files.length,
       canUndo: result.files.length > 0,
+      // Cosa serve per pubblicarlo, e se il progetto ha detto come farlo. Il
+      // pannello deve poter dire "e' solo in locale" senza chiedere altro.
+      canShip: result.files.length > 0,
+      shipConfigured: !!readShipConfig(dir),
     });
 
     if (task.verify && task.tabId && task.selector && result.files.length) {
@@ -383,6 +388,100 @@ const server = http.createServer(async (req, res) => {
 
       case 'GET /selected': {
         json(res, req, 200, lastSelection || { elements: [], at: null });
+        return;
+      }
+
+      // ── Ship: checks, commit, push, deploy ──
+
+      /**
+       * Come si pubblica questo progetto, e cosa si potrebbe proporre se non
+       * lo ha ancora dichiarato.
+       *
+       * `detected` non fa partire niente: e' la prova che il pannello mostra a
+       * chi deve confermare ("qui c'e' un .vercel/project.json"), perche' una
+       * configurazione indovinata che esegue comandi da sola e' esattamente
+       * l'automatismo che poi non si lascia acceso.
+       */
+      case 'GET /ship/config': {
+        let dir;
+        try { dir = resolveProjectDir(url.searchParams.get('projectPath')); } catch (e) {
+          json(res, req, 400, { error: e.message });
+          return;
+        }
+        const config = readShipConfig(dir);
+        json(res, req, 200, {
+          dir,
+          file: CONFIG_FILE,
+          config,
+          detected: config ? null : detectProject(dir),
+        });
+        return;
+      }
+
+      case 'POST /ship/config': {
+        const body = await readBody(req);
+        let dir;
+        try { dir = resolveProjectDir(body.projectPath); } catch (e) {
+          json(res, req, 400, { error: e.message });
+          return;
+        }
+        if (!body.config || typeof body.config !== 'object') {
+          json(res, req, 400, { error: 'missing config' });
+          return;
+        }
+        const config = writeShipConfig(dir, body.config);
+        console.log(`[⚙] ${CONFIG_FILE} scritto in ${dir}`);
+        json(res, req, 200, { config, file: CONFIG_FILE });
+        return;
+      }
+
+      case 'POST /ship': {
+        const body = await readBody(req);
+        const task = tasks.get(body.taskId);
+        if (!task) { json(res, req, 404, { error: 'unknown task' }); return; }
+        if (!task.files.length) { json(res, req, 400, { error: 'task modified no files' }); return; }
+        if (task.shipping) { json(res, req, 409, { error: 'already shipping' }); return; }
+
+        task.shipping = true;
+        json(res, req, 200, { message: 'shipping', taskId: task.taskId });
+
+        // Si risponde subito e si racconta il resto sul WebSocket: i controlli
+        // di un progetto vero durano minuti, e una richiesta HTTP tenuta
+        // aperta per minuti muore da sola nel modo peggiore, cioe' senza dire
+        // a che punto era arrivata.
+        (async () => {
+          const onEvent = (event) => {
+            broadcast('ship_progress', { taskId: task.taskId, tabId: task.tabId, ...event });
+            if (event.status === 'running' || event.status === 'failed') {
+              console.log(`[⇧] ${event.step} ${event.status}${event.command ? ': ' + event.command : ''}`);
+            }
+          };
+
+          try {
+            const result = await ship({
+              dir: task.dir,
+              files: task.files,
+              message: typeof body.message === 'string' ? body.message : null,
+              prompt: task.prompt,
+              onEvent,
+            });
+            task.shipped = result.ok;
+            broadcast('ship_done', { taskId: task.taskId, tabId: task.tabId, ...result });
+
+            // Lo stato del deploy si guarda solo se e' andata bene: dopo un
+            // fallimento non c'e' niente da aspettare.
+            if (result.ok) await watchDeploy({ dir: task.dir, onEvent });
+          } catch (err) {
+            broadcast('ship_done', {
+              taskId: task.taskId,
+              tabId: task.tabId,
+              ok: false,
+              steps: [{ step: 'ship', status: 'failed', error: truncate(err.message, 200) }],
+            });
+          } finally {
+            task.shipping = false;
+          }
+        })();
         return;
       }
 

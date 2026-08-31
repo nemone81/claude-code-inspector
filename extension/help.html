@@ -168,9 +168,9 @@ node server.js</code></pre>
   <tr><th>Symptom</th><th>Fix</th></tr>
   <tr><td>bridge offline</td><td>The bridge isn't running or the URL/port in ⚙ settings is wrong. Start it with <code>node server.js</code> in <code>bridge/</code>.</td></tr>
   <tr><td>bridge up · set token / bad token</td><td>Paste the token printed at bridge startup into ⚙ settings. To rotate it, delete <code>bridge/.inspector_token</code> and restart the bridge.</td></tr>
-  <tr><td>Cannot inspect this page</td><td>Chrome blocks extensions on <code>chrome://</code> pages and the Web Store. Use a normal page.</td></tr>
+  <tr><td>Cannot inspect this page</td><td>Chrome blocks extensions on <code>chrome://</code> pages, <code>file://</code> URLs and the Web Store. Use a normal http(s) page.</td></tr>
   <tr><td>Project directory not found</td><td>The project path must be absolute and literal (no <code>\&nbsp;</code> escapes) and the folder must exist.</td></tr>
-  <tr><td>No screenshots / verify fails on non-localhost pages</td><td>Default site access covers <code>localhost</code> only. Grant broader access from <code>chrome://extensions</code> → Claude Code Inspector → <i>Site access</i>.</td></tr>
+  <tr><td>Access to … denied / “must request permission to access this host”</td><td>Site access is granted per host: the first <b>Inspect</b> on a new domain opens Chrome's permission prompt — accept it. If you dismissed it, grant the host from <code>chrome://extensions</code> → Claude Code Inspector → <i>Site access</i>. Only <code>localhost</code> is granted up front.</td></tr>
   <tr><td>Claude answers with stale context</td><td>Sessions persist per project. Use <b>Reset session</b> in ⚙ settings to start fresh.</td></tr>
 </table>
 <div class="callout"><b>Heads-up:</b> in Edit mode Claude runs with auto-accepted edits inside the project you configured. Point it only at projects you're happy to let it modify — that's what Explain mode and <b>Undo task</b> are for.</div>
