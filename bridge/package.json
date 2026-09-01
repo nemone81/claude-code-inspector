@@ -1,6 +1,6 @@
 {
   "name": "claude-code-inspector",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Local bridge connecting the Claude Code Inspector Chrome extension to the Claude Agent SDK",
   "main": "server.js",
   "bin": {
