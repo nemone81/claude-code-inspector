@@ -55,6 +55,7 @@ function bindEvents() {
     chrome.tabs.create({ url: chrome.runtime.getURL('help.html') });
   });
   $('configToggle').addEventListener('click', () => $('configPanel').classList.toggle('open'));
+  $('projectRow').addEventListener('click', grantForPage);
   $('saveConfig').addEventListener('click', saveConfig);
   $('resetSessionBtn').addEventListener('click', resetSession);
 
@@ -196,11 +197,13 @@ async function probePageProject() {
   if (lastProbe === probe) return;
   lastProbe = probe;
 
-  // Senza permesso sull'origine non si inietta niente. Non e' un problema:
-  // sui siti non ancora autorizzati il meta arriva comunque alla prima
-  // selezione, quando il permesso viene chiesto per il picker.
+  // Senza permesso sull'origine non si inietta niente, quindi non si sa
+  // nemmeno se la pagina dichiari un progetto. Ripiegare in silenzio sul
+  // campo in ⚙ mostrerebbe un progetto plausibile e sbagliato proprio dove
+  // capita piu' spesso, sui siti pubblicati: meglio dire che non si e' potuto
+  // guardare, e offrire il permesso.
   const granted = await chrome.permissions.contains({ origins: [origin] }).catch(() => false);
-  if (!granted) { setPageProject(null); return; }
+  if (!granted) { setPageProject({ needsGrant: origin, host: hostOf(url) }); return; }
 
   let declared = null;
   try {
@@ -243,12 +246,42 @@ function setPageProject(next) {
   if (next?.dir && next.dir !== before) addLog(`⌂ progetto dalla pagina: ${next.declared} → ${next.dir}`);
 }
 
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch { return url; }
+}
+
+/**
+ * Il permesso si puo' chiedere solo da un gesto dell'utente, e
+ * `chrome.permissions.request()` conta il clic soltanto se e' la prima cosa
+ * che si chiama: nessun await prima, come per il picker.
+ */
+function grantForPage() {
+  const origin = pageProject?.needsGrant;
+  if (!origin) return;
+  chrome.permissions.request({ origins: [origin] }, (granted) => {
+    if (chrome.runtime.lastError || !granted) {
+      showStatus(`Accesso a ${pageProject?.host || 'questo sito'} negato`, 'error');
+      return;
+    }
+    lastProbe = null;
+    probePageProject();
+  });
+}
+
 function renderProject() {
   const row = $('projectRow');
   if (!row) return;
   const name = $('projectName');
   const source = $('projectSource');
-  row.classList.remove('warn');
+  row.classList.remove('warn', 'clickable', 'hidden');
+
+  if (pageProject?.needsGrant) {
+    name.textContent = pageProject.host;
+    name.title = `Concedi l'accesso a ${pageProject.host} per leggere il progetto che dichiara`;
+    source.textContent = 'consenti per leggerlo →';
+    row.classList.add('warn', 'clickable');
+    return;
+  }
 
   if (pageProject?.dir) {
     name.textContent = pageProject.declared;
@@ -269,7 +302,6 @@ function renderProject() {
     source.textContent = 'scrivilo in ⚙, o dichiaralo nella pagina';
     row.classList.add('warn');
   }
-  row.classList.remove('hidden');
 }
 
 function basename(p) {

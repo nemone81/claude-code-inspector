@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1] - 2026-09-01
+
+### Fixed
+- On a site the extension has no host permission for — a deployed site, typically — the panel could not read the page's `<meta name="claude-inspector-project">` and silently fell back to the path in ⚙ settings, showing a plausible, wrong project exactly where it matters most. It now says it could not look, and the project row becomes a click that asks Chrome for access to that host.
+
 ## [4.1.0] - 2026-09-01
 
 ### Fixed

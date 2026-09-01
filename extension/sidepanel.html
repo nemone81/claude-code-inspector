@@ -108,6 +108,10 @@
   .project-row .project-source { margin-left: auto; color: var(--text3);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .project-row.warn { border-color: rgba(208,139,44,0.4); }
+  /* Cliccabile solo quando il clic serve davvero: concedere l'accesso al sito
+     per poter leggere il progetto che dichiara. */
+  .project-row.clickable { cursor: pointer; }
+  .project-row.clickable:hover { background: var(--bg3); }
   .project-row.warn .project-source, .project-row.warn .project-name { color: var(--warn, #d08b2c); }
   .btn-row .grow { flex: 1; }
 
