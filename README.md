@@ -67,9 +67,15 @@ How a project is published is **declared, not detected**, in a
 The bridge knows nothing about Vercel, Netlify or any host: these are just
 commands your project provides. The first time you press Ship on a project
 without the file, the panel looks at the repo (`.vercel/project.json`, a
-`deploy` script, a workflow), shows you **what it saw**, and offers to write the
-file — a guessed pipeline that runs by itself is the kind of automation nobody
-ends up trusting.
+`deploy` script or a `deploy.sh`, a workflow), shows you **what it saw**, and
+offers to write the file — a guessed pipeline that runs by itself is the kind of
+automation nobody ends up trusting. The package manager comes from the lockfile
+only if that command is actually on your `PATH`: a `bun.lockb` left behind by a
+scaffold should not make the first Ship die on `command not found`.
+
+Read the proposal before accepting it: detection cannot know that a `lint`
+script fails on errors that were already there, and a check like that would
+block every publish for reasons that have nothing to do with your change.
 
 ⚠️ Those commands run on your machine with your permissions. They come only
 from that file inside the project directory, never from the extension or an
@@ -151,6 +157,8 @@ By default, the repo whose absolute path you typed in the panel's ⚙ settings. 
 ```
 
 or `INSPECTOR_PROJECT_ROOTS=/Users/you/Projects` (`:`-separated). The file is reread on every request — no restart. **With no roots declared, pages cannot choose the project at all**, which is the default. An absolute path in the meta is accepted too, as long as it falls under a root, but publishing one in production HTML hands your username and repo names to anyone who opens the source: prefer the name.
+
+**On a site other than `localhost`, grant access first.** Only `localhost` is in the manifest, so anywhere else the extension cannot inject — and therefore cannot even tell whether the page names a project. The panel says so rather than quietly falling back to the ⚙ path (a plausible, wrong project, on exactly the pages where it matters): the project row shows the hostname and *consenti per leggerlo →*, and clicking it asks Chrome for that host. The first **Select element** on the domain asks for the same permission.
 
 ## Requirements
 
