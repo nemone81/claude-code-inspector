@@ -96,6 +96,19 @@
   #originNotice { display: none; margin: 0 0 10px; padding: 8px 10px; border-radius: 6px;
     font-size: 11px; line-height: 1.45; background: rgba(208,139,44,0.12); color: var(--warn, #d08b2c); }
   #originNotice.visible { display: block; }
+  /* Su cosa lavora l'agente, sempre in vista: se la pagina lo dichiara da se'
+     il campo in configurazione non lo si guarda piu', e senza questa riga non
+     si saprebbe piu' su quale repo si sta scrivendo. */
+  .project-row { display: flex; align-items: baseline; gap: 6px; margin-bottom: 10px;
+    padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg2); font-size: 11px; min-width: 0; }
+  .project-row .project-label { color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .project-row .project-name { font-family: var(--mono); color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-row .project-source { margin-left: auto; color: var(--text3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-row.warn { border-color: rgba(208,139,44,0.4); }
+  .project-row.warn .project-source, .project-row.warn .project-name { color: var(--warn, #d08b2c); }
   .btn-row .grow { flex: 1; }
 
   /* Selected elements */
@@ -217,10 +230,16 @@
 
 <div class="main">
 
+  <div id="projectRow" class="project-row hidden">
+    <span class="project-label">Progetto</span>
+    <span id="projectName" class="project-name"></span>
+    <span id="projectSource" class="project-source"></span>
+  </div>
+
   <div id="configPanel" class="panel">
     <div class="panel-label">Configuration</div>
     <div class="field">
-      <label for="projectPath">Project path</label>
+      <label for="projectPath">Project path — usato quando la pagina non dichiara il suo progetto</label>
       <input id="projectPath" type="text" placeholder="/Users/you/Projects/my-app" spellcheck="false">
     </div>
     <div class="field">

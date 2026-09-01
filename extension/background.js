@@ -241,7 +241,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.action) {
     case 'elementsSelected': {
       const tabId = sender.tab?.id ?? null;
-      selection = { elements: msg.elements, pageUrl: msg.pageUrl, tabId, screenshots: [] };
+      selection = { elements: msg.elements, pageUrl: msg.pageUrl, project: msg.project || null, tabId, screenshots: [] };
       sendSelectionToBridge();
       broadcastToPanel({ action: 'selectionChanged', selection });
       // Capture element screenshots in the background, then update the panel.

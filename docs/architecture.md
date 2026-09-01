@@ -62,7 +62,7 @@ The bridge invokes Claude Code via the Agent SDK with `permissionMode: 'acceptEd
 
 1. User clicks **Select element** in the side panel → background injects `content.js` into the active tab → user picks element(s).
 2. Content script sends `elementsSelected` → background stores the selection (with the tab id), pushes it to the bridge over WS (for the MCP tool), captures cropped screenshots, and notifies the panel.
-3. User types a prompt and hits Send → panel builds the message (prompt + element blocks + source info) and POSTs `/send` with `{ prompt, projectPath, mode, tabId, verify, elements, images }` and the auth token.
+3. User types a prompt and hits Send → panel builds the message (prompt + element blocks + source info) and POSTs `/send` with `{ prompt, projectPath | project, mode, tabId, verify, elements, images }` and the auth token. `project` is what the *page* declared in its `<meta>`; the bridge resolves it under the locally declared roots (`lib/projects.js`), while `projectPath` is what the user typed in settings and is used as-is.
 4. Bridge answers immediately with a `taskId` and queues the task on the project's warm session; `task_start` / `task_progress` / `task_done` stream over WS as Claude works.
 5. Background shows notifications and forwards events to the panel's activity log; on `task_done` the banner goes to the originating tab.
 6. If verify was enabled and files changed: bridge sends `capture_request` → background reloads the tab, re-captures element + screenshot → bridge pushes a verification turn into the same session → `verify_done` (with `fixed: true` if Claude corrected itself).

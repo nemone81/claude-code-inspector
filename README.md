@@ -27,6 +27,7 @@ https://github.com/user-attachments/assets/dd3f5a25-765a-461b-8628-cedccc59ed74
 - **Warm sessions, queued per project** — one persistent Agent SDK process per project (streaming input): no cold spawn per task, context preserved, concurrent prompts queued.
 - **Diff preview & undo** — see the git diff of the files a task touched, and undo it with one click (`git stash`, recoverable).
 - **Ship it** — checks, commit and push the files a task changed, without leaving the panel. The task line says where the change is (`3 file · solo in locale`) and the panel warns you when the tab you are inspecting is **not** localhost: the bridge edits files, and a published site only shows what has been committed and deployed.
+- **The page names its own project** — a `<meta name="claude-inspector-project" content="my-app">` in the page tells the panel which repo to edit, so switching project is switching tab. It is a *name*, not a path: the bridge resolves it under roots you declare locally, and refuses anything outside them.
 - **MCP tools** — `get_selected_element` lets Claude Code in your terminal read what you selected in the browser; `list_my_browsers` / `find_browser` / `focus_browser` (Chrome Companion) tell your Chrome profiles apart and bring the right one to the foreground when driving Claude in Chrome.
 - **Token-authenticated** — the bridge only accepts requests carrying the secret it prints at startup; web pages are blocked by Origin checks.
 
@@ -132,6 +133,25 @@ claude-code-inspector/
 
 See [docs/architecture.md](docs/architecture.md) for the full data flow and [docs/installation.md](docs/installation.md) for a deeper setup guide.
 
+## Which project the inspector edits
+
+By default, the repo whose absolute path you typed in the panel's ⚙ settings. Retyping it every time you switch project is friction you pay ten times a day, so a page can name its own project instead:
+
+```html
+<meta name="claude-inspector-project" content="my-app">
+```
+
+(or `<html data-claude-inspector-project="my-app">` when the `<head>` is out of reach). The panel reads it from the active tab, shows which project is in use and where it came from, and that name wins over the ⚙ field while you are on that page.
+
+**It is a name, not a path — deliberately.** Whoever serves the page writes that tag, production included, so the bridge never takes it for a directory: it resolves the name under the roots you declared **locally**, and refuses anything outside them (no `..` escape, no symlink out of a root, and not a root itself — pointing the agent's cwd at `~/Projects` would hand one meta tag write access to every repo under it). Declare your roots once:
+
+```json
+// ~/.claude-inspector/config.json
+{ "roots": ["~/Projects"] }
+```
+
+or `INSPECTOR_PROJECT_ROOTS=/Users/you/Projects` (`:`-separated). The file is reread on every request — no restart. **With no roots declared, pages cannot choose the project at all**, which is the default. An absolute path in the meta is accepted too, as long as it falls under a root, but publishing one in production HTML hands your username and repo names to anyone who opens the source: prefer the name.
+
 ## Requirements
 
 - macOS, Linux, or Windows (tested primarily on macOS).
@@ -146,6 +166,8 @@ See [docs/architecture.md](docs/architecture.md) for the full data flow and [doc
 - CORS is only ever granted to `chrome-extension://` origins.
 - The bridge binds to `127.0.0.1` only.
 
+- A project **declared by a page** is never used as-is: it is a name resolved under the roots you declared locally (`~/.claude-inspector/config.json`), with `..`, symlinks out of a root and the root itself refused. No roots declared, no page-chosen projects. The path typed in ⚙ settings is not filtered — it is your own explicit choice.
+
 Note that Claude runs with `acceptEdits` and skips permission prompts inside the project you configure — point it only at projects you trust it to edit (Explain mode is read-only).
 
 ## Configuration
@@ -158,6 +180,7 @@ Configurable via environment (see `bridge/.env.example`) or CLI flags (`--port`,
 | `PROJECT_PATH` | `cwd` | Default project the bridge edits when the request omits one |
 | `CLAUDE_PATH` | *(unset)* | Override the path to the Claude Code binary if auto-detection fails |
 | `INSPECTOR_BRIDGE_URL` | `http://127.0.0.1:3131` | Bridge URL used by the MCP server |
+| `INSPECTOR_PROJECT_ROOTS` | *(unset)* | `:`-separated roots under which a page may name its project; overrides `~/.claude-inspector/config.json` |
 
 The extension stores project path, bridge URL and token in `chrome.storage.local` per-browser.
 

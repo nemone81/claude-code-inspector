@@ -11,6 +11,8 @@ let lastTaskId = null;
 let lastTaskShipped = false;
 let history = [];
 let currentTab = null;      // kept fresh: permissions.request() can't await a tabs.query
+let pageProject = null;     // { declared, dir, error } — il progetto che dichiara la pagina attiva
+let lastProbe = null;       // ultima pagina interrogata: evita di reiniettare a ogni evento tab
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -19,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindEvents();
   trackActiveTab();
   initColorPicker();
+  renderProject();
   refreshSelectionFromBackground();
   checkBridgeStatus();
   setInterval(checkBridgeStatus, 10000);
@@ -94,6 +97,9 @@ function bindEvents() {
     if (msg.action === 'selectionChanged') {
       selection = msg.selection;
       renderSelection();
+      // La pagina lo ha appena dichiarato al momento della selezione: e' la
+      // fonte piu' fresca che ci sia, non serve reiniettare per rileggerlo.
+      if (selection?.project) adoptDeclaredProject(selection.project);
     }
     if (msg.action === 'bridgeStatus') {
       renderBridgeStatus(msg.connected);
@@ -113,6 +119,7 @@ function trackActiveTab() {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       currentTab = tab || null;
       updateOriginNotice();
+      probePageProject();
     });
   };
   refresh();
@@ -167,6 +174,126 @@ function updateOriginNotice() {
   el.classList.add('visible');
 }
 
+// ─── Il progetto, detto dalla pagina ──────────────────────────────────────────
+/**
+ * Su cosa sta lavorando l'agente, adesso.
+ *
+ * Riscrivere il path a mano ogni volta che si cambia progetto e' il tipo di
+ * attrito che si paga dieci volte al giorno, quindi la pagina puo' dichiararsi
+ * da sola con un <meta name="claude-inspector-project" content="mio-repo">.
+ * Quel nome pero' lo scrive chi serve la pagina, produzione compresa: non e'
+ * un path, e' una richiesta. Chi la trasforma in una directory e' il bridge,
+ * che la accetta solo dentro le root dichiarate in locale — qui si mostra il
+ * risultato, non lo si decide.
+ */
+async function probePageProject() {
+  const tab = currentTab;
+  const url = tab?.url || '';
+  const origin = originPattern(url);
+  if (!tab?.id || !origin) { setPageProject(null); return; }
+
+  const probe = `${tab.id}|${url}`;
+  if (lastProbe === probe) return;
+  lastProbe = probe;
+
+  // Senza permesso sull'origine non si inietta niente. Non e' un problema:
+  // sui siti non ancora autorizzati il meta arriva comunque alla prima
+  // selezione, quando il permesso viene chiesto per il picker.
+  const granted = await chrome.permissions.contains({ origins: [origin] }).catch(() => false);
+  if (!granted) { setPageProject(null); return; }
+
+  let declared = null;
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const meta = document.querySelector('meta[name="claude-inspector-project"]');
+        const raw = meta?.content || document.documentElement.dataset.claudeInspectorProject || '';
+        return raw.trim().slice(0, 512) || null;
+      },
+    });
+    declared = res?.result || null;
+  } catch { /* pagina non iniettabile: resta la configurazione manuale */ }
+
+  if (!declared) { setPageProject(null); return; }
+  adoptDeclaredProject(declared);
+}
+
+async function adoptDeclaredProject(declared) {
+  if (!declared) { setPageProject(null); return; }
+  if (pageProject?.declared === declared && pageProject.dir) return;
+
+  try {
+    const res = await fetch(
+      `${config.bridgeUrl}/project/resolve?project=${encodeURIComponent(declared)}`,
+      { headers: authHeaders() },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) setPageProject({ declared, dir: data.dir, error: null });
+    else setPageProject({ declared, dir: null, error: data.error || `bridge: HTTP ${res.status}` });
+  } catch {
+    setPageProject({ declared, dir: null, error: 'bridge non raggiungibile' });
+  }
+}
+
+function setPageProject(next) {
+  const before = pageProject?.dir || null;
+  pageProject = next;
+  renderProject();
+  if (next?.dir && next.dir !== before) addLog(`⌂ progetto dalla pagina: ${next.declared} → ${next.dir}`);
+}
+
+function renderProject() {
+  const row = $('projectRow');
+  if (!row) return;
+  const name = $('projectName');
+  const source = $('projectSource');
+  row.classList.remove('warn');
+
+  if (pageProject?.dir) {
+    name.textContent = pageProject.declared;
+    name.title = pageProject.dir;
+    source.textContent = 'dalla pagina';
+  } else if (pageProject?.error) {
+    name.textContent = pageProject.declared;
+    name.title = pageProject.error;
+    source.textContent = pageProject.error;
+    row.classList.add('warn');
+  } else if (config.projectPath) {
+    name.textContent = basename(config.projectPath);
+    name.title = config.projectPath;
+    source.textContent = 'da configurazione';
+  } else {
+    name.textContent = 'nessuno';
+    name.title = '';
+    source.textContent = 'scrivilo in ⚙, o dichiaralo nella pagina';
+    row.classList.add('warn');
+  }
+  row.classList.remove('hidden');
+}
+
+function basename(p) {
+  const parts = String(p).replace(/\/+$/, '').split('/');
+  return parts[parts.length - 1] || p;
+}
+
+/**
+ * Cosa si manda al bridge per dire dove lavorare.
+ *
+ * `project` (dichiarato dalla pagina) e `projectPath` (scritto da te) sono due
+ * cose diverse per il bridge: il primo passa dal filtro delle root, il secondo
+ * no perche' e' una tua scelta esplicita. Si manda uno solo dei due.
+ */
+function projectTarget() {
+  if (pageProject?.dir) return { project: pageProject.declared };
+  return { projectPath: config.projectPath };
+}
+
+function projectLabel() {
+  if (pageProject?.dir) return `${pageProject.declared} (dalla pagina)`;
+  return config.projectPath ? `${config.projectPath} (da configurazione)` : 'progetto di default del bridge';
+}
+
 /** L'etichetta accanto a "Last task": dove sta, adesso, quello che e' stato fatto. */
 function setShipState(text, cls = '') {
   const el = $('shipState');
@@ -214,6 +341,7 @@ function refreshSelectionFromBackground() {
   chrome.runtime.sendMessage({ action: 'getSelection' }, (res) => {
     selection = res?.selection || null;
     renderSelection();
+    if (selection?.project) adoptDeclaredProject(selection.project);
   });
 }
 
@@ -288,6 +416,9 @@ async function saveConfig() {
   config.token = $('tokenInput').value.trim();
   await chrome.storage.local.set({ config });
   chrome.runtime.sendMessage({ action: 'configUpdated' });
+  lastProbe = null;              // token o bridge cambiati: si rilegge la pagina
+  probePageProject();
+  renderProject();
   $('configPanel').classList.remove('open');
   showStatus('Configuration saved ✓', 'success');
   checkBridgeStatus();
@@ -298,7 +429,7 @@ async function resetSession() {
     const res = await fetch(`${config.bridgeUrl}/reset`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ projectPath: config.projectPath || undefined }),
+      body: JSON.stringify(projectTarget()),
     });
     if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
     showStatus('Session reset ✓ — the next request starts fresh', 'success');
@@ -335,7 +466,7 @@ async function sendToClaude() {
       headers: authHeaders(),
       body: JSON.stringify({
         prompt: builtMessage(),
-        projectPath: config.projectPath,
+        ...projectTarget(),
         mode,
         tabId: selection?.tabId || null,
         verify: mode === 'edit' && $('verifyCheck').checked,
@@ -348,6 +479,7 @@ async function sendToClaude() {
     if (!res.ok) throw new Error(data.error || `Bridge error: ${res.status}`);
 
     lastTaskId = data.taskId;
+    addLog(`→ progetto: ${projectLabel()}`);
     $('taskActions').classList.remove('visible');
     $('diffView').classList.remove('open');
     showStatus('✓ Queued — Claude is on it', 'success');
@@ -453,7 +585,7 @@ async function shipTask() {
 
   try {
     const cfgRes = await fetch(
-      `${config.bridgeUrl}/ship/config?projectPath=${encodeURIComponent(config.projectPath || '')}`,
+      `${config.bridgeUrl}/ship/config?${new URLSearchParams(projectTarget())}`,
       { headers: authHeaders() },
     );
     const cfg = await cfgRes.json().catch(() => ({}));
@@ -479,7 +611,7 @@ async function shipTask() {
       const write = await fetch(`${config.bridgeUrl}/ship/config`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ projectPath: config.projectPath, config: s }),
+        body: JSON.stringify({ ...projectTarget(), config: s }),
       });
       const written = await write.json().catch(() => ({}));
       if (!write.ok) throw new Error(written.error || 'non sono riuscito a scrivere la configurazione');

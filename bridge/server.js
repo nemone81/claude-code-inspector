@@ -11,6 +11,7 @@ const { SessionPool, MODES } = require('./lib/sessions');
 const { diffFiles, undoFiles } = require('./lib/git-tools');
 const { detectProject, readShipConfig, writeShipConfig, ship, watchDeploy, CONFIG_FILE } = require('./lib/ship');
 const { CompanionStore, ALIAS_FILE } = require('./lib/companion');
+const { loadRoots, resolveDeclaredProject, CONFIG_FILE: ROOTS_FILE } = require('./lib/projects');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3131;
@@ -162,6 +163,21 @@ function resolveProjectDir(projectPath) {
   const dir = (projectPath || PROJECT_PATH).replace(/\\ /g, ' ');
   if (!fs.existsSync(dir)) throw new Error(`Project directory not found: ${dir}`);
   return dir;
+}
+
+/**
+ * Su quale progetto si lavora, per questa richiesta.
+ *
+ * `project` e' quello che ha dichiarato la *pagina* (un <meta>): non e' una
+ * directory, e' una richiesta, e passa solo dal filtro delle root consentite.
+ * `projectPath` e' quello che ha scritto a mano chi usa il pannello: e' una
+ * sua scelta, e vale come tale. La pagina vince quando c'e', perche' e' il
+ * motivo per cui esiste il meta — cambi tab, cambia progetto, senza toccare
+ * la configurazione.
+ */
+function resolveDir({ project, projectPath }) {
+  if (project) return resolveDeclaredProject(project);
+  return resolveProjectDir(projectPath);
 }
 
 function imageBlocks(images) {
@@ -320,12 +336,12 @@ const server = http.createServer(async (req, res) => {
 
       case 'POST /send': {
         const body = await readBody(req);
-        const { prompt, projectPath, tabId, verify, elements, images } = body;
+        const { prompt, tabId, verify, elements, images } = body;
         const mode = MODES[body.mode] ? body.mode : 'edit';
         if (!prompt) { json(res, req, 400, { error: 'missing prompt' }); return; }
 
         let dir;
-        try { dir = resolveProjectDir(projectPath); } catch (e) {
+        try { dir = resolveDir(body); } catch (e) {
           json(res, req, 400, { error: e.message });
           return;
         }
@@ -374,7 +390,7 @@ const server = http.createServer(async (req, res) => {
 
       case 'POST /reset': {
         const body = await readBody(req);
-        pool.reset(body.projectPath ? resolveProjectDir(body.projectPath) : null);
+        pool.reset(body.project || body.projectPath ? resolveDir(body) : null);
         console.log('[→] Session(s) cleared');
         broadcast('session_reset', {});
         json(res, req, 200, { message: 'Session cleared' });
@@ -391,6 +407,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      /**
+       * Cosa diventa, su questa macchina, il progetto dichiarato da una pagina.
+       *
+       * Serve al pannello per dirlo *prima* di mandare il prompt: la
+       * risoluzione avviene qui, e senza questa rotta l'estensione mostrerebbe
+       * il nome dichiarato lasciando scoprire solo al primo invio che non
+       * esiste, o che sta fuori dalle root.
+       */
+      case 'GET /project/resolve': {
+        const declared = url.searchParams.get('project');
+        const roots = loadRoots();
+        try {
+          json(res, req, 200, { ok: true, project: declared, dir: resolveDeclaredProject(declared, { roots }), roots });
+        } catch (e) {
+          json(res, req, 400, { ok: false, project: declared, error: e.message, roots, configFile: ROOTS_FILE });
+        }
+        return;
+      }
+
       // ── Ship: checks, commit, push, deploy ──
 
       /**
@@ -404,7 +439,12 @@ const server = http.createServer(async (req, res) => {
        */
       case 'GET /ship/config': {
         let dir;
-        try { dir = resolveProjectDir(url.searchParams.get('projectPath')); } catch (e) {
+        try {
+          dir = resolveDir({
+            project: url.searchParams.get('project'),
+            projectPath: url.searchParams.get('projectPath'),
+          });
+        } catch (e) {
           json(res, req, 400, { error: e.message });
           return;
         }
@@ -421,7 +461,7 @@ const server = http.createServer(async (req, res) => {
       case 'POST /ship/config': {
         const body = await readBody(req);
         let dir;
-        try { dir = resolveProjectDir(body.projectPath); } catch (e) {
+        try { dir = resolveDir(body); } catch (e) {
           json(res, req, 400, { error: e.message });
           return;
         }
@@ -547,6 +587,12 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('╚═══════════════════════════════════════╝');
   console.log(`\n✓ Bridge listening on http://localhost:${PORT}`);
   console.log(`✓ Default project: ${PROJECT_PATH}`);
+  const roots = loadRoots();
+  if (roots.length) {
+    console.log(`✓ Progetti dichiarabili dalle pagine, sotto: ${roots.join(', ')}`);
+  } else {
+    console.log(`· Le pagine non possono dichiarare il progetto: nessuna root in ${ROOTS_FILE}`);
+  }
   if (CLAUDE_PATH) console.log(`✓ Claude binary: ${CLAUDE_PATH}`);
   console.log(`\n🔑 Auth token (paste it in the extension side panel):\n   ${TOKEN}`);
   console.log('\nEndpoints (all require the token):');
@@ -558,6 +604,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('  GET  /ship/config → how this project says it is published');
   console.log('  POST /reset     → clear session(s)');
   console.log('  GET  /selected  → last selected element(s) (used by MCP)');
+  console.log('  GET  /project/resolve?project= → dove sta il progetto dichiarato da una pagina');
   console.log('  GET  /browsers  → connected Chrome profiles (companion)');
   console.log('  GET  /browsers/find?q=      → find browser by tab url/title');
   console.log('  POST /browsers/:id/focus    → bring a browser to the foreground');

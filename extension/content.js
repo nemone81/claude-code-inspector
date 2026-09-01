@@ -59,6 +59,21 @@
     document.body.style.cursor = '';
   }
 
+  /**
+   * Il progetto che la pagina dichiara di essere:
+   *
+   *     <meta name="claude-inspector-project" content="tirelli-intranet">
+   *
+   * Vale un nome, non un path: il bridge lo risolve sotto le root consentite,
+   * e un path assoluto pubblicato nell'HTML regalerebbe username e nomi dei
+   * repo a chiunque apra il sorgente della pagina in produzione.
+   */
+  function declaredProject() {
+    const meta = document.querySelector('meta[name="claude-inspector-project"]');
+    const raw = meta?.content || document.documentElement.dataset.claudeInspectorProject || '';
+    return raw.trim().slice(0, 512) || null;
+  }
+
   function finishSelection() {
     const elements = selectedElements.map(getElementInfo);
     deactivateInspector();
@@ -67,6 +82,7 @@
       action: 'elementsSelected',
       elements,
       pageUrl: window.location.href,
+      project: declaredProject(),
       dpr: window.devicePixelRatio || 1,
     });
     showToast(`${elements.length} element${elements.length > 1 ? 's' : ''} selected ✓`);

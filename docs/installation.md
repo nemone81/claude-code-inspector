@@ -50,11 +50,28 @@ Copy the token — you'll need it in step 4. Leave this terminal open.
 
 Click the extension icon — the side panel opens. Open ⚙ (settings):
 
-- **Project path** — absolute path of the local repo Claude should edit (e.g. `/Users/you/my-app`).
+- **Project path** — absolute path of the local repo Claude should edit (e.g. `/Users/you/my-app`). Used whenever the inspected page does not name a project itself (see below).
 - **Bridge URL** — defaults to `http://localhost:3131`. Only change if you customized `PORT`.
 - **Auth token** — paste the token the bridge printed at startup.
 
 Click **Save**. The status dot in the header turns green when the WebSocket connects.
+
+### Letting the page name its project
+
+Retyping that path on every project switch gets old fast. A page can name its own project:
+
+```html
+<meta name="claude-inspector-project" content="my-app">
+```
+
+The panel picks it up from the active tab and it wins over the ⚙ field while you are on that page. It is a **name**, not a path: whoever serves the page writes that tag — production included — so the bridge resolves it under roots you declare locally and refuses anything outside them (`..`, symlinks leaving a root, and the root itself). Declare them once:
+
+```json
+// ~/.claude-inspector/config.json
+{ "roots": ["~/Projects"] }
+```
+
+or with `INSPECTOR_PROJECT_ROOTS=/Users/you/Projects`. The file is reread on every request. With no roots declared, pages cannot choose the project at all.
 
 ## 5. Use it
 
@@ -94,6 +111,10 @@ The Agent SDK couldn't auto-detect the Claude Code binary. Either:
 ### `Project directory not found`
 
 The path the extension sent doesn't exist. Make sure the **Project path** setting is the absolute, literal path (no `\ ` escapes) of an existing folder.
+
+### `progetto "…" non trovato nelle root consentite`
+
+The page names a project the bridge will not resolve: either the folder is not under a declared root, or no roots are declared. Add them to `~/.claude-inspector/config.json` (`{"roots": ["~/Projects"]}`) — no restart needed.
 
 ### Screenshots or verification fail on non-localhost pages
 

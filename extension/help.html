@@ -127,7 +127,7 @@ node server.js</code></pre>
   <li>Click the extension icon in the toolbar — the <b>side panel</b> opens.</li>
   <li>Open settings (<b>⚙</b>) and fill in:
     <ul>
-      <li><b>Project path</b> — absolute path of the repo Claude should edit, e.g. <code>/Users/you/Projects/my-app</code></li>
+      <li><b>Project path</b> — absolute path of the repo Claude should edit, e.g. <code>/Users/you/Projects/my-app</code>. Used when the page doesn't declare a project of its own (see step 3).</li>
       <li><b>Bridge URL</b> — leave <code>http://localhost:3131</code> unless you changed the port</li>
       <li><b>Auth token</b> — paste the token from step 1</li>
     </ul>
@@ -136,7 +136,16 @@ node server.js</code></pre>
 </ol>
 <div class="callout green"><span class="dot green"></span>&nbsp; The dot in the panel header turns <b>green</b> when the WebSocket to the bridge is connected. <span class="dot red"></span>&nbsp; Red with <i>“bridge up · set token”</i> means the bridge is running but the token is missing or wrong.</div>
 
-<h2><span class="n">3</span>Use it</h2>
+<h2><span class="n">3</span>Let the page say which project it is</h2>
+<p>Retyping the project path every time you switch project is the friction you pay ten times a day. A page can name its own project instead — put this in its <code>&lt;head&gt;</code>:</p>
+<pre><code>&lt;meta name="claude-inspector-project" content="my-app"&gt;</code></pre>
+<p class="muted">Equivalent, when the head is out of reach: <code>&lt;html data-claude-inspector-project="my-app"&gt;</code>.</p>
+<p>The side panel shows which project is active and where it came from — <i>dalla pagina</i> or <i>da configurazione</i> — and that name wins over the ⚙ field while you are on that page.</p>
+<div class="callout"><b>It's a name, not a path.</b> Whoever serves the page writes that tag, production included, so the bridge never takes it for a directory: it resolves the name under the <b>roots you declared locally</b> and refuses anything outside them (no <code>..</code>, no symlink out, not the root itself). Declare your roots once in <code>~/.claude-inspector/config.json</code>:
+<pre><code>{ "roots": ["~/Projects"] }</code></pre>
+or via <code>INSPECTOR_PROJECT_ROOTS=/Users/you/Projects</code>. With no roots declared, pages cannot pick the project at all. An absolute path is accepted too, but publishing one in production HTML hands your username and repo names to anyone who opens the source — prefer the name.</div>
+
+<h2><span class="n">4</span>Use it</h2>
 <ol>
   <li>Open the page you're working on — ideally your local dev server.</li>
   <li>Click <b>⊙ Select element</b> (or <b>⊙⊙ Multi-select</b>) and click element(s) on the page. In multi-select, finish with <kbd>Enter</kbd> (<kbd>Esc</kbd> also confirms what you picked).</li>
@@ -157,18 +166,19 @@ node server.js</code></pre>
   <li><b>History</b> — click any previous prompt to reuse it.</li>
 </ul>
 
-<h2><span class="n">4</span>Optional: Claude Code in your terminal (MCP)</h2>
+<h2><span class="n">5</span>Optional: Claude Code in your terminal (MCP)</h2>
 <p>Register the bridge's MCP server once, and terminal Claude Code sessions can see what you selected in the browser:</p>
 <pre><code>claude mcp add inspector -- node /abs/path/to/claude-code-inspector/bridge/mcp-server.js</code></pre>
 <p>Then just say <i>“look at the element I selected in the browser”</i>. The MCP server also exposes the <b>companion</b> tools: <code>list_my_browsers</code>, <code>find_browser</code> and <code>focus_browser</code> tell your Chrome profiles apart (each profile running this extension announces its windows and tabs to the bridge) and bring the right one to the foreground.</p>
 <p class="muted">Privacy: the tab list only ever goes to your local bridge, only when something changes, and URLs of sensitive sites (password managers, payment providers, Google accounts) are redacted. The list is configurable via the <code>sensitiveDomains</code> key in the extension's storage.</p>
 
-<h2><span class="n">5</span>Troubleshooting</h2>
+<h2><span class="n">6</span>Troubleshooting</h2>
 <table>
   <tr><th>Symptom</th><th>Fix</th></tr>
   <tr><td>bridge offline</td><td>The bridge isn't running or the URL/port in ⚙ settings is wrong. Start it with <code>node server.js</code> in <code>bridge/</code>.</td></tr>
   <tr><td>bridge up · set token / bad token</td><td>Paste the token printed at bridge startup into ⚙ settings. To rotate it, delete <code>bridge/.inspector_token</code> and restart the bridge.</td></tr>
   <tr><td>Cannot inspect this page</td><td>Chrome blocks extensions on <code>chrome://</code> pages, <code>file://</code> URLs and the Web Store. Use a normal http(s) page.</td></tr>
+  <tr><td>progetto “…” non trovato nelle root consentite</td><td>The page declares a project the bridge won't resolve: either the folder isn't under a declared root, or no roots are declared yet. Put them in <code>~/.claude-inspector/config.json</code> — <code>{"roots":["~/Projects"]}</code> — the bridge rereads the file, no restart needed.</td></tr>
   <tr><td>Project directory not found</td><td>The project path must be absolute and literal (no <code>\&nbsp;</code> escapes) and the folder must exist.</td></tr>
   <tr><td>Access to … denied / “must request permission to access this host”</td><td>Site access is granted per host: the first <b>Inspect</b> on a new domain opens Chrome's permission prompt — accept it. If you dismissed it, grant the host from <code>chrome://extensions</code> → Claude Code Inspector → <i>Site access</i>. Only <code>localhost</code> is granted up front.</td></tr>
   <tr><td>Claude answers with stale context</td><td>Sessions persist per project. Use <b>Reset session</b> in ⚙ settings to start fresh.</td></tr>

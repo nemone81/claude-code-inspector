@@ -16,12 +16,13 @@ Listens on `http://localhost:3131` by default and prints the **auth token** at s
 | Method | Path | Purpose |
 |---|---|---|
 | `WS`   | `/ws?token=…` | Event stream (`task_start`, `task_progress`, `task_done`, `verify_start`, `verify_done`, `session_reset`) + element-capture channel |
-| `POST` | `/send`     | Submit a prompt: `{ prompt, projectPath, mode: "edit"\|"explain", tabId, verify, elements, images }` |
+| `POST` | `/send`     | Submit a prompt: `{ prompt, projectPath \| project, mode: "edit"\|"explain", tabId, verify, elements, images }` |
 | `GET`  | `/diff?taskId=` | Git diff of the files a task modified |
 | `POST` | `/undo`     | `{ taskId }` — stash the task's changes (recover with `git stash pop`) |
 | `POST` | `/reset`    | Clear session(s): `{ projectPath }` for one project, empty body for all |
 | `GET`  | `/session`  | Inspect warm sessions |
 | `GET`  | `/selected` | Last element(s) selected in the browser (used by the MCP server) |
+| `GET`  | `/project/resolve?project=` | Where a page-declared project lands on this machine, or why it was refused |
 | `GET`  | `/browsers` | Connected Chrome profiles: alias, email, window/tab counts, sample tabs |
 | `GET`  | `/browsers/find?q=` | Find which browser has a tab matching a URL/title substring |
 | `POST` | `/browsers/:id/focus` | Bring a browser profile to the foreground (round-trip with the extension) |
@@ -54,6 +55,7 @@ Every Chrome profile running the extension announces itself over the WS: a stabl
 |---|---|---|
 | `PORT` | `3131` | Port to listen on |
 | `PROJECT_PATH` | `cwd` | Default project path used when a request omits one |
+| `INSPECTOR_PROJECT_ROOTS` | *(unset)* | `:`-separated roots under which a page may name its project (overrides `~/.claude-inspector/config.json`) |
 | `CLAUDE_PATH` | *(unset)* | Override the path to the Claude Code binary if auto-detection fails |
 | `INSPECTOR_BRIDGE_URL` | `http://127.0.0.1:3131` | Bridge URL used by `mcp-server.js` |
 
