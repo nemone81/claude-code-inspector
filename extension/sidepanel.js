@@ -774,6 +774,9 @@ function handleBridgeEvent(ev) {
         // differenza fra sapere cosa aggiustare e riprovare a caso.
         showStatus(`⇧ Fermato su "${failed?.step || 'ship'}"\n${(failed?.error || '').slice(0, 200)}\n${(failed?.output || '').slice(-400)}`, 'error');
         setShipState('non pubblicato', 'local');
+        // Senza questo il pulsante resta su "SHIPPING…": cliccabile, ma con
+        // scritto che sta facendo una cosa che ha gia' smesso di fare.
+        $('shipBtn').textContent = '⇧ Ship it';
       }
       break;
     }

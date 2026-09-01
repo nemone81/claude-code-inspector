@@ -75,6 +75,22 @@ function writeShipConfig(dir, config) {
  * an oracle: "there is a .vercel/project.json here" is checkable by the person
  * reading it, "this is a Vercel project" is not.
  */
+/**
+ * Il comando esiste davvero su questa macchina?
+ *
+ * Un lockfile dice quale gestore ha *creato* le dipendenze, non quale sia
+ * installato qui: un `bun.lockb` lasciato da uno scaffold vive per sempre nel
+ * repo anche di chi bun non ce l'ha, e proporre `bun run test` come cancello
+ * della pubblicazione la fa fallire con exit 127 al primo tentativo — un
+ * errore che sembra del progetto e invece e' del suggerimento.
+ */
+function onPath(cmd) {
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  return dirs.some((d) => {
+    try { return fs.statSync(path.join(d, cmd)).isFile(); } catch { return false; }
+  });
+}
+
 function detectProject(dir) {
   const seen = [];
   const exists = (p) => fs.existsSync(path.join(dir, p));
@@ -85,13 +101,15 @@ function detectProject(dir) {
   } catch { /* not a node project */ }
 
   const scripts = pkg?.scripts ?? {};
-  const runner = exists('pnpm-lock.yaml')
-    ? 'pnpm'
-    : exists('yarn.lock')
-      ? 'yarn'
-      : exists('bun.lockb')
-        ? 'bun run'
-        : 'npm run';
+  // Il lockfile propone, il PATH dispone: npm c'e' ovunque ci sia Node, ed e'
+  // la ricaduta giusta quando il gestore del lockfile qui non esiste.
+  const byLock = [
+    ['pnpm-lock.yaml', 'pnpm', 'pnpm'],
+    ['yarn.lock', 'yarn', 'yarn'],
+    ['bun.lockb', 'bun', 'bun run'],
+    ['bun.lock', 'bun', 'bun run'],
+  ].find(([lock, bin]) => exists(lock) && onPath(bin));
+  const runner = byLock ? byLock[2] : 'npm run';
 
   const checks = ['lint', 'typecheck', 'test']
     .filter((s) => scripts[s])
@@ -110,9 +128,15 @@ function detectProject(dir) {
   } else if (scripts.deploy) {
     seen.push('package.json: script "deploy"');
     deploy.run = `${runner} deploy`;
-  } else if (exists('deploy/deploy.sh')) {
-    seen.push('deploy/deploy.sh');
-    deploy.run = './deploy/deploy.sh';
+  } else {
+    // Uno script di deploy scritto a mano sta nella radice tanto quanto in
+    // deploy/: cercarlo in un posto solo significa proporre una Ship che
+    // committa, spinge e non pubblica niente.
+    const script = ['deploy.sh', 'deploy/deploy.sh', 'scripts/deploy.sh'].find(exists);
+    if (script) {
+      seen.push(script);
+      deploy.run = `./${script}`;
+    }
   }
 
   const workflows = path.join(dir, '.github', 'workflows');

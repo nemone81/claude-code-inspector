@@ -17,7 +17,7 @@ const { loadRoots, resolveDeclaredProject, CONFIG_FILE: ROOTS_FILE } = require('
 const PORT = process.env.PORT || 3131;
 const PROJECT_PATH = process.env.PROJECT_PATH || process.cwd();
 const CLAUDE_PATH = process.env.CLAUDE_PATH || null;
-const VERSION = '4.1.1';
+const VERSION = '4.1.2';
 
 // ─── Agent SDK ────────────────────────────────────────────────────────────────
 let sdk;

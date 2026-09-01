@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.2] - 2026-09-01
+
+### Fixed
+- Ship's project detection picked the package manager from whichever lockfile was in the repo, without checking the command exists here. A `bun.lockb` left behind by a scaffold made the first Ship die on `bun: command not found` (exit 127) — an error that looks like the project's and is the suggestion's. The lockfile now only decides if its command is on `PATH`; otherwise `npm`. `bun.lock` (bun >= 1.2) is recognised alongside `bun.lockb`.
+- A `deploy.sh` in the repo root was not detected — only `deploy/deploy.sh` — so a project that deploys with a root script got a suggestion that commits, pushes and publishes nothing. `deploy.sh`, `deploy/deploy.sh` and `scripts/deploy.sh` are all looked for.
+- After a failed Ship the button stayed on *SHIPPING…*: clickable, but saying it was doing something it had stopped doing.
+
 ## [4.1.1] - 2026-09-01
 
 ### Fixed

@@ -126,7 +126,7 @@ async function handle(msg) {
       reply(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: 'claude-code-inspector', version: '4.1.1' },
+        serverInfo: { name: 'claude-code-inspector', version: '4.1.2' },
       });
       return;
 

@@ -60,13 +60,30 @@ test('config: quello che non e\' una stringa non diventa un comando', () => {
   assert.equal(cfg.deploy.run, null);
 });
 
+/**
+ * Quali comandi esistono, per questo test.
+ *
+ * Senza, il risultato dipenderebbe da cosa e' installato sulla macchina che
+ * esegue la suite: verde qui, rosso su un altro Mac, e nessuna delle due cose
+ * direbbe niente sul codice.
+ */
+function withPath(bins, fn) {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inspector-bin-'));
+  for (const b of bins) {
+    fs.writeFileSync(path.join(binDir, b), '#!/bin/sh\n', { mode: 0o755 });
+  }
+  const before = process.env.PATH;
+  process.env.PATH = binDir;
+  try { return fn(); } finally { process.env.PATH = before; }
+}
+
 test('detect: propone guardando il repo, e dice cosa ha visto', () => {
   const { dir } = tempRepo({
     'package.json': JSON.stringify({ scripts: { lint: 'x', test: 'y' } }),
     'pnpm-lock.yaml': '',
     '.vercel/project.json': '{}',
   });
-  const { seen, suggestion } = detectProject(dir);
+  const { seen, suggestion } = withPath(['pnpm'], () => detectProject(dir));
 
   assert.deepEqual(suggestion.checks, ['pnpm lint', 'pnpm test'], 'usa il gestore di pacchetti del repo');
   assert.ok(seen.some((s) => s.includes('.vercel/project.json')), 'la prova si mostra a chi conferma');
@@ -76,9 +93,48 @@ test('detect: propone guardando il repo, e dice cosa ha visto', () => {
 
 test('detect: senza indizi non propone comandi', () => {
   const { dir } = tempRepo();
-  const { suggestion } = detectProject(dir);
+  const { suggestion } = withPath([], () => detectProject(dir));
   assert.deepEqual(suggestion.checks, []);
   assert.equal(suggestion.deploy, undefined);
+});
+
+// Il caso vero: un bun.lockb lasciato da uno scaffold vive nel repo di chi bun
+// non ce l'ha, e proporlo fa fallire la prima Ship con exit 127.
+test('detect: un lockfile di un gestore non installato non decide i comandi', () => {
+  const files = { 'package.json': JSON.stringify({ scripts: { test: 'x' } }) };
+  for (const lock of ['bun.lockb', 'bun.lock', 'pnpm-lock.yaml', 'yarn.lock']) {
+    const { dir } = tempRepo({ ...files, [lock]: '' });
+    const { suggestion } = withPath(['npm'], () => detectProject(dir));
+    assert.deepEqual(suggestion.checks, ['npm run test'], `${lock} senza il suo comando ricade su npm`);
+  }
+});
+
+test('detect: bun.lock vale quanto bun.lockb quando bun c\'e\'', () => {
+  for (const lock of ['bun.lockb', 'bun.lock']) {
+    const { dir } = tempRepo({ 'package.json': JSON.stringify({ scripts: { test: 'x' } }), [lock]: '' });
+    const { suggestion } = withPath(['bun'], () => detectProject(dir));
+    assert.deepEqual(suggestion.checks, ['bun run test'], lock);
+  }
+});
+
+// Uno script di deploy nella radice e' lo stesso script che sta in deploy/:
+// non vederlo significa proporre una Ship che committa, spinge e non pubblica.
+test('detect: lo script di deploy si cerca anche nella radice', () => {
+  for (const script of ['deploy.sh', 'deploy/deploy.sh', 'scripts/deploy.sh']) {
+    const { dir } = tempRepo({ [script]: '#!/bin/sh\n' });
+    const { seen, suggestion } = withPath(['npm'], () => detectProject(dir));
+    assert.equal(suggestion.deploy.run, `./${script}`, script);
+    assert.ok(seen.includes(script), `chi conferma vede da dove viene: ${script}`);
+  }
+});
+
+test('detect: uno script "deploy" nel package.json ha la precedenza sul file', () => {
+  const { dir } = tempRepo({
+    'package.json': JSON.stringify({ scripts: { deploy: 'x' } }),
+    'deploy.sh': '#!/bin/sh\n',
+  });
+  const { suggestion } = withPath(['npm'], () => detectProject(dir));
+  assert.equal(suggestion.deploy.run, 'npm run deploy');
 });
 
 test('ship: committa **solo** i file del task', async () => {
